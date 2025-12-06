@@ -170,39 +170,32 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // Background for the whole app - dark teal/black inspired by image
-            Color(red: 0.0, green: 0.02, blue: 0.02)
-                .edgesIgnoringSafeArea(.all)
+            // Clean black background like Robinhood
+            Color.black
+                .ignoresSafeArea()
             
-            VStack(spacing: 0) {
-                HeaderView()
-                
-                if viewModel.stock?.isMaritalStatus == true && viewModel.currentPrice > 0 {
-                    StockDisplayView(viewModel: viewModel, showingModal: $showingModal)
-                } else if showingCommitForm {
-                    AddStockFormView(viewModel: viewModel, isPresented: $showingCommitForm)
-                } else {
-                    InitialView(showingCommitForm: $showingCommitForm)
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Minimal header
+                    HStack {
+                        Text("HOIDMA")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.white)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    .padding(.bottom, 20)
+                    
+                    if viewModel.stock?.isMaritalStatus == true && viewModel.currentPrice > 0 {
+                        StockDisplayView(viewModel: viewModel, showingModal: $showingModal)
+                    } else if showingCommitForm {
+                        AddStockFormView(viewModel: viewModel, isPresented: $showingCommitForm)
+                    } else {
+                        InitialView(showingCommitForm: $showingCommitForm)
+                    }
                 }
-                
-                Spacer()
-                
-                // Footer for Persistence Status
-                HStack {
-                    Text("User ID: \(viewModel.manager.userId?.prefix(8) ?? "Loading")...")
-                    Spacer()
-                    Image(systemName: "internaldrive.fill")
-                    Text("Data Persistence via Mock Database")
-                }
-                .font(.caption2)
-                .foregroundColor(.gray)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
             }
-            .background(Color(red: 0.02, green: 0.05, blue: 0.04))
-            .cornerRadius(20)
-            .shadow(radius: 20)
-            .padding()
 
             // Divorce Modal
             if showingModal {
@@ -214,156 +207,138 @@ struct ContentView: View {
 
 // MARK: - Subviews
 
-struct HeaderView: View {
-    var body: some View {
-        HStack {
-            Text("HOIDMA")
-                .font(.largeTitle)
-                .fontWeight(.heavy)
-                .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
-            
-            Spacer()
-            
-            Image(systemName: "diamond.fill")
-                .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
-                .font(.title)
-        }
-        .padding()
-        .background(Color(red: 0.05, green: 0.12, blue: 0.08))
-        .cornerRadius(20, corners: [.topLeft, .topRight])
-        .shadow(color: Color(red: 0.231, green: 0.706, blue: 0.494).opacity(0.3), radius: 5)
-    }
-}
-
 struct StockDisplayView: View {
     @ObservedObject var viewModel: StockViewModel
     @Binding var showingModal: Bool
     
     var body: some View {
-        VStack(spacing: 25) {
+        VStack(spacing: 0) {
+            // Ticker and delete button
             HStack {
                 Text(viewModel.stock?.ticker ?? "N/A")
-                    .font(.system(size: 48, weight: .heavy))
-                    .foregroundColor(viewModel.isGreen ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundColor(.white)
                 
                 Spacer()
                 
                 Button {
                     showingModal = true
                 } label: {
-                    Image(systemName: "trash.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundColor(.red)
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(.gray)
+                        .padding(8)
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 30)
             
-            VStack(spacing: 15) {
-                StatCard(label: "Current Price", value: viewModel.currentPrice, isCurrency: true)
-                StatCard(label: "Purchase Price", value: viewModel.stock?.purchasePrice ?? 0, isCurrency: true)
-                StatCard(label: "Shares Owned", value: Double(viewModel.stock?.shares ?? 0), isCurrency: false)
-                StatCard(label: "Total Cost", value: viewModel.stock?.totalCost ?? 0, isCurrency: true)
+            // Large price display - Robinhood style
+            VStack(spacing: 8) {
+                Text(viewModel.currentPrice, format: .currency(code: "USD"))
+                    .font(.system(size: 56, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                HStack(spacing: 8) {
+                    Text(viewModel.changePercent >= 0 ? "+" : "")
+                    Text(viewModel.changePercent, format: .percent.precision(.fractionLength(2)))
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("(\(viewModel.profitLoss, format: .currency(code: "USD")))")
+                        .font(.system(size: 20, weight: .semibold))
+                }
+                .foregroundColor(viewModel.isGreen ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
             }
+            .padding(.bottom, 40)
             
-            ProfitLossCard(viewModel: viewModel)
+            // Portfolio value card - clean and simple
+            VStack(spacing: 12) {
+                HStack {
+                    Text("Portfolio Value")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.gray)
+                    Spacer()
+                }
+                
+                HStack {
+                    Text(viewModel.currentPrice * Double(viewModel.stock?.shares ?? 0), format: .currency(code: "USD"))
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundColor(.white)
+                    Spacer()
+                }
+            }
+            .padding(20)
+            .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+            .cornerRadius(12)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
             
-            ConvictionCard(text: viewModel.convictionText, isGreen: viewModel.isGreen)
+            // Stats in simple rows
+            VStack(spacing: 0) {
+                StatRow(label: "Shares", value: "\(viewModel.stock?.shares ?? 0)")
+                Divider().background(Color.gray.opacity(0.2))
+                StatRow(label: "Avg Cost", value: viewModel.stock?.purchasePrice ?? 0, isCurrency: true)
+                Divider().background(Color.gray.opacity(0.2))
+                StatRow(label: "Total Cost", value: viewModel.stock?.totalCost ?? 0, isCurrency: true)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 30)
+            
+            // Conviction message - simplified
+            if !viewModel.convictionText.isEmpty {
+                Text(viewModel.convictionText)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
+            }
         }
-        .padding(.top, 20)
-        .padding(.bottom, 10)
     }
 }
 
-struct StatCard: View {
+struct StatRow: View {
     let label: String
-    let value: Double
+    let valueString: String?
+    let value: Double?
     let isCurrency: Bool
     
-    var formattedValue: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = isCurrency ? .currency : .none
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = isCurrency ? 2 : 0
-        return formatter.string(from: NSNumber(value: value)) ?? value.description
+    init(label: String, value: String) {
+        self.label = label
+        self.valueString = value
+        self.value = nil
+        self.isCurrency = false
+    }
+    
+    init(label: String, value: Double, isCurrency: Bool = false) {
+        self.label = label
+        self.valueString = nil
+        self.value = value
+        self.isCurrency = isCurrency
     }
     
     var body: some View {
         HStack {
             Text(label)
+                .font(.system(size: 16, weight: .regular))
                 .foregroundColor(.gray)
-                .font(.headline)
             Spacer()
-            Text(formattedValue)
-                .foregroundColor(.white)
-                .font(.headline)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color(red: 0.08, green: 0.15, blue: 0.12))
-        .cornerRadius(10)
-        .padding(.horizontal)
-    }
-}
-
-struct ProfitLossCard: View {
-    @ObservedObject var viewModel: StockViewModel
-    
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("P/L (Total Value)")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-            
-            HStack(alignment: .lastTextBaseline) {
-                Text(viewModel.profitLoss, format: .currency(code: "USD"))
-                    .font(.system(size: 36, weight: .bold))
-                    .foregroundColor(viewModel.isGreen ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
-                
-                Text("(\(viewModel.changePercent, specifier: "%.2f")%)")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                    .foregroundColor(viewModel.isGreen ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
-                
-                Spacer()
-            }
-            
-            Text("Current Value: \(viewModel.currentPrice * Double(viewModel.stock?.shares ?? 0), format: .currency(code: "USD"))")
-                .font(.callout)
-                .foregroundColor(.gray)
-        }
-        .padding()
-        .background(Color(red: 0.08, green: 0.15, blue: 0.12))
-        .cornerRadius(12)
-        .padding(.horizontal)
-    }
-}
-
-struct ConvictionCard: View {
-    let text: String
-    let isGreen: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "diamond.fill")
-                    .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
-                Text("Conviction Check")
-                    .font(.headline)
+            if let valueString = valueString {
+                Text(valueString)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white)
+            } else if let value = value {
+                if isCurrency {
+                    Text(value, format: .currency(code: "USD"))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                } else {
+                    Text(value, format: .number)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                }
             }
-            Text(""\(text)"")
-                .font(.title3)
-                .foregroundColor(.white)
-                .italic()
         }
-        .padding()
-        .background(isGreen ? Color(red: 0.231, green: 0.706, blue: 0.494).opacity(0.2) : Color.red.opacity(0.15))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isGreen ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red, lineWidth: 2)
-        )
-        .cornerRadius(12)
-        .padding(.horizontal)
+        .padding(.vertical, 16)
     }
 }
 
@@ -371,38 +346,36 @@ struct InitialView: View {
     @Binding var showingCommitForm: Bool
     
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "diamond.fill")
-                .font(.system(size: 80))
-                .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
-                .padding(.top, 40)
+        VStack(spacing: 0) {
+            Spacer()
             
-            Text("Choose Your Life Partner")
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-            
-            Text("Commit to a stock and practice **Hoidma** (The Art of Holding).")
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
+            VStack(spacing: 16) {
+                Text("No positions")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("Start by adding a stock to track")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundColor(.gray)
+            }
+            .padding(.bottom, 40)
             
             Button {
                 showingCommitForm = true
             } label: {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text("Commit to a Stock")
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(Color(red: 0.231, green: 0.706, blue: 0.494))
-                .foregroundColor(.black)
-                .cornerRadius(30)
-                .shadow(color: Color(red: 0.231, green: 0.706, blue: 0.494).opacity(0.5), radius: 5)
+                Text("Add Stock")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(Color(red: 0.231, green: 0.706, blue: 0.494))
+                    .cornerRadius(12)
             }
-            .padding(.top, 10)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 40)
+            
+            Spacer()
         }
-        .padding(40)
     }
 }
 
@@ -414,65 +387,110 @@ struct AddStockFormView: View {
     @State private var priceInput: String = ""
     @State private var sharesInput: String = ""
     @State private var commitError: String? = nil
+    @FocusState private var focusedField: Field?
+    
+    enum Field {
+        case ticker, price, shares
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("The Vows")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-            
-            VStack(spacing: 15) {
-                TextField("Ticker Symbol (e.g., TSLA)", text: $tickerInput)
-                    .padding()
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(10)
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Button {
+                    isPresented = false
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                Text("Add Stock")
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(.white)
                 
-                TextField("Purchase Price per Share ($)", text: $priceInput)
-                    .keyboardType(.decimalPad)
-                    .padding()
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(10)
-                    .foregroundColor(.white)
+                Spacer()
                 
-                TextField("Number of Shares", text: $sharesInput)
-                    .keyboardType(.numberPad)
-                    .padding()
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(10)
-                    .foregroundColor(.white)
+                Button {
+                    attemptCommit()
+                } label: {
+                    Text("Add")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            .padding(.bottom, 30)
+            
+            // Form fields - clean and simple
+            VStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Symbol")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.gray)
+                    
+                    TextField("TSLA", text: $tickerInput)
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(.white)
+                        .textInputAutocapitalization(.characters)
+                        .focused($focusedField, equals: .ticker)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+                        .cornerRadius(8)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Purchase Price")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.gray)
+                    
+                    HStack {
+                        Text("$")
+                            .font(.system(size: 18, weight: .regular))
+                            .foregroundColor(.gray)
+                        TextField("0.00", text: $priceInput)
+                            .font(.system(size: 18, weight: .regular))
+                            .foregroundColor(.white)
+                            .keyboardType(.decimalPad)
+                            .focused($focusedField, equals: .price)
+                    }
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+                    .cornerRadius(8)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Shares")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.gray)
+                    
+                    TextField("0", text: $sharesInput)
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(.white)
+                        .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .shares)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+                        .cornerRadius(8)
+                }
+            }
+            .padding(.horizontal, 20)
             
             if let commitError = commitError {
                 Text(commitError)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundColor(.red)
-                    .padding(.top, 5)
+                    .padding(.top, 16)
             }
             
-            Button {
-                attemptCommit()
-            } label: {
-                Text("Finalize Commitment")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color(red: 0.231, green: 0.706, blue: 0.494))
-                    .foregroundColor(.black)
-                    .cornerRadius(30)
-            }
-            .buttonStyle(PlainButtonStyle())
-            
-            Button {
-                isPresented = false
-            } label: {
-                Text("Cancel")
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 5)
-                    .foregroundColor(.gray)
-            }
-            .buttonStyle(PlainButtonStyle())
+            Spacer()
         }
-        .padding()
     }
     
     private func attemptCommit() {
@@ -493,48 +511,58 @@ struct DivorceModal: View {
     
     var body: some View {
         ZStack {
-            Color.black.opacity(0.5)
-                .edgesIgnoringSafeArea(.all)
+            Color.black.opacity(0.7)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    showingModal = false
+                }
             
-            VStack(spacing: 20) {
-                Text("Divorce Proceedings")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.red)
+            VStack(spacing: 0) {
+                Text("Remove Position")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.top, 24)
+                    .padding(.bottom, 16)
                 
-                Text("Are you sure you want to end your commitment to **\(viewModel.stock?.ticker ?? "the stock")**? Realizing the loss (or gain) means admitting you were wrong (or right, but impatient). This action is non-reversible!")
+                Text("Are you sure you want to remove \(viewModel.stock?.ticker ?? "this stock") from your portfolio?")
+                    .font(.system(size: 16, weight: .regular))
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 32)
                 
-                HStack(spacing: 20) {
-                    Button("Stay Married (Cancel)") {
-                        showingModal = false
-                    }
-                    .padding()
-                    .background(Color.gray)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                    
+                VStack(spacing: 12) {
                     Button {
                         viewModel.unMarry()
                         showingModal = false
                     } label: {
-                        HStack {
-                            Image(systemName: "trash.fill")
-                            Text("Un-Marry Now")
-                        }
-                        .padding()
-                        .background(Color.red)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
+                        Text("Remove")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 56)
+                            .background(Color.red)
+                            .cornerRadius(12)
+                    }
+                    
+                    Button {
+                        showingModal = false
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 56)
+                            .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+                            .cornerRadius(12)
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
-            .padding(30)
-            .background(Color(red: 0.02, green: 0.05, blue: 0.04))
-            .cornerRadius(20)
-            .shadow(color: Color(red: 0.231, green: 0.706, blue: 0.494).opacity(0.3), radius: 20)
-            .padding(40)
+            .background(Color(red: 0.05, green: 0.05, blue: 0.05))
+            .cornerRadius(16)
+            .padding(.horizontal, 20)
         }
     }
 }
