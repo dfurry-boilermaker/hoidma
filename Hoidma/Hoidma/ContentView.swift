@@ -178,7 +178,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     // Minimal header
                     HStack {
-                        Text("HOIDMA")
+                        Text("HOiDMA")
                             .font(.system(size: 28, weight: .bold))
                             .foregroundColor(.white)
                         Spacer()
