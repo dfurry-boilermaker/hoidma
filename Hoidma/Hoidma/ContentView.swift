@@ -177,10 +177,18 @@ struct ContentView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     // Minimal header
-                    HStack {
+                    HStack(spacing: 12) {
+                        // Logo
+                        Image("dave.folly")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 32, height: 32)
+                            .cornerRadius(6)
+                        
                         Text("HOiDMA")
                             .font(.system(size: 28, weight: .bold))
                             .foregroundColor(.white)
+                        
                         Spacer()
                     }
                     .padding(.horizontal, 20)
