@@ -9,10 +9,12 @@ class StockViewModel: ObservableObject {
     private var timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
     
     // The placeholder Firebase Manager
-    @ObservedObject var manager = FirebaseManager()
+    let manager = FirebaseManager()
     
     // API service for fetching real stock data
     private let apiService = StockAPIService.shared
+    
+    private var cancellables = Set<AnyCancellable>()
     
     init() {
         manager.startDataListener()
@@ -39,8 +41,6 @@ class StockViewModel: ObservableObject {
             }
             .store(in: &cancellables)
     }
-    
-    private var cancellables = Set<AnyCancellable>()
     
     /// Updates prices for all stocks using the API
     @MainActor
