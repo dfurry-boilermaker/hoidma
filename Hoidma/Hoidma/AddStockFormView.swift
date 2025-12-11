@@ -3,47 +3,43 @@ import SwiftUI
 struct AddStockFormView: View {
     @ObservedObject var viewModel: StockViewModel
     @Binding var isPresented: Bool
+    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
     
     @State private var tickerInput: String = ""
     @State private var priceInput: String = ""
     @State private var sharesInput: String = ""
+    @State private var accountNameInput: String = ""
     @State private var commitError: String? = nil
     @FocusState private var focusedField: Field?
     
     enum Field {
-        case ticker, price, shares
+        case ticker, price, shares, accountName
     }
     
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                Button {
-                    isPresented = false
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundColor(.gray)
+            ZStack {
+                HStack {
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image("cancel")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 48, height: 48)
+                    }
+                    
+                    Spacer()
                 }
                 
-                Spacer()
-                
+                // Centered title
                 Text("Add Stock")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.black)
-                
-                Spacer()
-                
-                Button {
-                    attemptCommit()
-                } label: {
-                    Text("Add")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
-                }
+                    .foregroundColor(Color.primary)
             }
             .padding(.horizontal, 20)
-            .padding(.top, 10)
+            .padding(.top, 20)
             .padding(.bottom, 30)
             
             // Form fields - clean and simple
@@ -51,55 +47,86 @@ struct AddStockFormView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Symbol")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color.secondary)
                     
-                    TextField("TSLA", text: $tickerInput)
+                    TextField("NVDA", text: $tickerInput)
                         .font(.system(size: 18, weight: .regular))
-                        .foregroundColor(.black)
+                        .foregroundColor(Color.primary)
                         .textInputAutocapitalization(.characters)
                         .focused($focusedField, equals: .ticker)
                         .padding(.vertical, 12)
                         .padding(.horizontal, 16)
-                        .background(Color.gray.opacity(0.1))
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(8)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Account Name")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Color.secondary)
+                    
+                    TextField("Indv, 401k, Roth IRA, etc.", text: $accountNameInput)
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(Color.primary)
+                        .focused($focusedField, equals: .accountName)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                        .background(Color(UIColor.secondarySystemBackground))
                         .cornerRadius(8)
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Purchase Price")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color.secondary)
                     
                     HStack {
                         Text("$")
                             .font(.system(size: 18, weight: .regular))
-                            .foregroundColor(.gray)
-                        TextField("0.00", text: $priceInput)
+                            .foregroundColor(Color.secondary)
+                        TextField("22.00", text: $priceInput)
                             .font(.system(size: 18, weight: .regular))
-                            .foregroundColor(.black)
+                            .foregroundColor(Color.primary)
                             .keyboardType(.decimalPad)
                             .focused($focusedField, equals: .price)
                     }
                     .padding(.vertical, 12)
                     .padding(.horizontal, 16)
-                    .background(Color.gray.opacity(0.1))
+                    .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(8)
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Shares")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color.secondary)
                     
-                    TextField("0", text: $sharesInput)
+                    TextField("9.0000", text: $sharesInput)
                         .font(.system(size: 18, weight: .regular))
-                        .foregroundColor(.black)
-                        .keyboardType(.numberPad)
+                        .foregroundColor(Color.primary)
+                        .keyboardType(.decimalPad)
                         .focused($focusedField, equals: .shares)
                         .padding(.vertical, 12)
                         .padding(.horizontal, 16)
-                        .background(Color.gray.opacity(0.1))
+                        .background(Color(UIColor.secondarySystemBackground))
                         .cornerRadius(8)
                 }
+                
+                // Add button - full width below shares field
+                Button {
+                    attemptCommit()
+                } label: {
+                    Text("Add")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color(red: 0.231, green: 0.706, blue: 0.494), lineWidth: 1)
+                        )
+                }
+                .padding(.top, 8)
             }
             .padding(.horizontal, 20)
             
@@ -112,16 +139,21 @@ struct AddStockFormView: View {
             
             Spacer()
         }
+        .background(Color(UIColor.systemBackground))
     }
     
     private func attemptCommit() {
-        guard let price = Double(priceInput), let shares = Int(sharesInput), !tickerInput.isEmpty else {
+        guard let price = Double(priceInput), let shares = Double(sharesInput), shares > 0, !tickerInput.isEmpty else {
             commitError = "Please enter valid numbers and a ticker symbol."
             return
         }
         
+        // Account name is optional, default to "Main" if empty
+        let accountName = accountNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalAccountName = accountName.isEmpty ? "Main" : accountName
+        
         // Call the view model to commit and dismiss the form
-        viewModel.commitStock(ticker: tickerInput.uppercased(), price: price, shares: shares)
+        viewModel.commitStock(ticker: tickerInput.uppercased(), price: price, shares: shares, accountName: finalAccountName)
         isPresented = false
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 
 class StockViewModel: ObservableObject {
     @Published var stocks: [Stock] = []
@@ -66,7 +67,7 @@ class StockViewModel: ObservableObject {
                 }
                 
                 // Update price with historical data and API period changes if available
-                updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose)
+                updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose, logoURL: stockData.logoURL)
                 
                 // Update company name if it's different (and not just the ticker)
                 if stock.companyName != stockData.companyName && stockData.companyName != stock.ticker.uppercased() {
@@ -120,7 +121,7 @@ class StockViewModel: ObservableObject {
             
             if let stockData = await apiService.fetchStockData(for: stock.ticker) {
                 await MainActor.run {
-                    updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose)
+                    updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose, logoURL: stockData.logoURL)
                 }
             } else {
                 // Fallback to mock price if API fails
@@ -130,12 +131,50 @@ class StockViewModel: ObservableObject {
                     updatePriceData(for: stock, newPrice: fallbackPrice)
                 }
             }
+            
+            // If logo is missing, try to fetch it separately
+            await MainActor.run {
+                if stockPrices[stock.ticker]?.logoURL == nil || stockPrices[stock.ticker]?.logoURL?.isEmpty == true {
+                    Task {
+                        if let logoURL = await apiService.fetchCompanyLogo(for: stock.ticker) {
+                            await MainActor.run {
+                                if var existingData = stockPrices[stock.ticker] {
+                                    existingData.logoURL = logoURL
+                                    withAnimation {
+                                        stockPrices[stock.ticker] = existingData
+                                    }
+                                    print("✅ Updated logo URL for \(stock.ticker): \(logoURL)")
+                                }
+                            }
+                        } else {
+                            print("⚠️ Failed to fetch logo for \(stock.ticker)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Fetches company logo separately (public method for manual fetching)
+    func fetchLogo(for ticker: String) {
+        Task {
+            if let logoURL = await apiService.fetchCompanyLogo(for: ticker) {
+                await MainActor.run {
+                    if var existingData = stockPrices[ticker] {
+                        existingData.logoURL = logoURL
+                        withAnimation {
+                            stockPrices[ticker] = existingData
+                        }
+                        print("✅ Fetched and updated logo URL for \(ticker): \(logoURL)")
+                    }
+                }
+            }
         }
     }
     
     /// Updates the price data structure with a new price
     @MainActor
-    private func updatePriceData(for stock: Stock, newPrice: Double, historicalPrices: [String: Double]? = nil, apiPeriodChanges: [String: Double]? = nil, previousClose: Double? = nil) {
+    private func updatePriceData(for stock: Stock, newPrice: Double, historicalPrices: [String: Double]? = nil, apiPeriodChanges: [String: Double]? = nil, previousClose: Double? = nil, logoURL: String? = nil) {
         let newProfitLoss = (newPrice * Double(stock.shares)) - stock.totalCost
         let newChangePercent = (newProfitLoss / stock.totalCost) * 100
         
@@ -230,6 +269,9 @@ class StockViewModel: ObservableObject {
         // Update previous close if provided (use existing if not provided)
         let updatedPreviousClose = previousClose ?? existingData?.previousClose
         
+        // Update logo URL if provided (use existing if not provided)
+        let updatedLogoURL = logoURL ?? existingData?.logoURL
+        
         withAnimation {
             stockPrices[stock.ticker] = StockPriceData(
                 ticker: stock.ticker,
@@ -249,12 +291,13 @@ class StockViewModel: ObservableObject {
                 ytdStartTime: ytdStartTime,
                 allTimeStartTime: allTimeStartTime,
                 apiPeriodChanges: updatedApiPeriodChanges,
-                previousClose: updatedPreviousClose
+                previousClose: updatedPreviousClose,
+                logoURL: updatedLogoURL
             )
         }
     }
     
-    func commitStock(ticker: String, price: Double, shares: Int) {
+    func commitStock(ticker: String, price: Double, shares: Double, accountName: String = "Main") {
         Task {
             // Fetch company name from API
             let companyName: String
@@ -266,8 +309,43 @@ class StockViewModel: ObservableObject {
             }
             
             await MainActor.run {
-                let newStock = Stock(ticker: ticker, companyName: companyName, purchasePrice: price, shares: shares)
-                manager.commit(newStock: newStock)
+                // Check if stock already exists
+                if let existingIndex = stocks.firstIndex(where: { $0.ticker == ticker }) {
+                    // Add the new lot to existing stock
+                    let existingStock = stocks[existingIndex]
+                    let newLot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
+                    var updatedLots = existingStock.lots
+                    updatedLots.append(newLot)
+                    
+                    // Calculate aggregated values from all lots
+                    let totalShares = updatedLots.reduce(0.0) { $0 + $1.shares }
+                    let totalCost = updatedLots.reduce(0.0) { $0 + $1.totalCost }
+                    let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : price
+                    
+                    // Create updated stock with all lots and aggregated values
+                    let updatedStock = Stock(
+                        ticker: ticker,
+                        companyName: companyName,
+                        purchasePrice: averagePurchasePrice,
+                        shares: Int(totalShares),
+                        isMaritalStatus: existingStock.isMaritalStatus,
+                        lots: updatedLots
+                    )
+                    stocks[existingIndex] = updatedStock
+                    manager.commit(newStock: updatedStock)
+                    
+                    // Trigger price update to recalculate profit/loss with new aggregated values
+                    if let priceData = stockPrices[ticker] {
+                        updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+                    } else {
+                        updatePrice(for: updatedStock)
+                    }
+                } else {
+                    // Create new stock with the lot
+                    let lot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
+                    let newStock = Stock(ticker: ticker, companyName: companyName, purchasePrice: price, shares: Int(shares), lots: [lot])
+                    manager.commit(newStock: newStock)
+                }
             }
         }
     }
@@ -275,6 +353,145 @@ class StockViewModel: ObservableObject {
     func removeStock(ticker: String) {
         manager.removeStock(ticker: ticker)
         stockPrices.removeValue(forKey: ticker)
+    }
+    
+    func updateStockLots(ticker: String, lots: [StockLot]) {
+        if let index = stocks.firstIndex(where: { $0.ticker == ticker }) {
+            let existingStock = stocks[index]
+            
+            // Calculate aggregated values from all lots
+            let totalShares = lots.reduce(0.0) { $0 + $1.shares }
+            let totalCost = lots.reduce(0.0) { $0 + $1.totalCost }
+            let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : existingStock.purchasePrice
+            
+            // Create a new Stock with updated lots and aggregated values
+            let newStock = Stock(
+                ticker: existingStock.ticker,
+                companyName: existingStock.companyName,
+                purchasePrice: averagePurchasePrice,
+                shares: Int(totalShares),
+                isMaritalStatus: existingStock.isMaritalStatus,
+                lots: lots
+            )
+            stocks[index] = newStock
+            manager.commit(newStock: newStock)
+            
+            // Trigger price update to recalculate profit/loss with new aggregated values
+            if let priceData = stockPrices[ticker] {
+                updatePriceData(for: newStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+            } else {
+                updatePrice(for: newStock)
+            }
+        }
+    }
+    
+    func sellLot(ticker: String, lotId: UUID, sharesToSell: Double) {
+        if let index = stocks.firstIndex(where: { $0.ticker == ticker }) {
+            let existingStock = stocks[index]
+            
+            // Find the lot to sell
+            guard let lotIndex = existingStock.lots.firstIndex(where: { $0.id == lotId }) else {
+                print("⚠️ Lot not found for ID: \(lotId)")
+                return
+            }
+            
+            var updatedLots = existingStock.lots
+            let lot = updatedLots[lotIndex]
+            
+            // Validate shares to sell
+            guard sharesToSell > 0 && sharesToSell <= lot.shares else {
+                print("⚠️ Invalid shares to sell: \(sharesToSell), available: \(lot.shares)")
+                return
+            }
+            
+            // Update or remove the lot
+            if sharesToSell >= lot.shares {
+                // Sell all shares - remove the lot
+                updatedLots.remove(at: lotIndex)
+            } else {
+                // Sell partial shares - create a new lot with reduced shares
+                var updatedLot = lot
+                updatedLot.shares = lot.shares - sharesToSell
+                updatedLots[lotIndex] = updatedLot
+            }
+            
+            // Calculate aggregated values from remaining lots
+            let totalShares = updatedLots.reduce(0.0) { $0 + $1.shares }
+            let totalCost = updatedLots.reduce(0.0) { $0 + $1.totalCost }
+            let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : existingStock.purchasePrice
+            
+            // Create updated stock
+            let updatedStock = Stock(
+                ticker: existingStock.ticker,
+                companyName: existingStock.companyName,
+                purchasePrice: averagePurchasePrice,
+                shares: Int(totalShares),
+                isMaritalStatus: existingStock.isMaritalStatus,
+                lots: updatedLots
+            )
+            
+            stocks[index] = updatedStock
+            manager.commit(newStock: updatedStock)
+            
+            // Trigger price update to recalculate profit/loss
+            if let priceData = stockPrices[ticker] {
+                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+            } else {
+                updatePrice(for: updatedStock)
+            }
+        }
+    }
+    
+    func addSharesToLot(ticker: String, lotId: UUID, sharesToAdd: Double, newPurchasePrice: Double) {
+        if let index = stocks.firstIndex(where: { $0.ticker == ticker }) {
+            let existingStock = stocks[index]
+            
+            // Find the lot to update
+            guard let lotIndex = existingStock.lots.firstIndex(where: { $0.id == lotId }) else {
+                print("⚠️ Lot not found for ID: \(lotId)")
+                return
+            }
+            
+            var updatedLots = existingStock.lots
+            let lot = updatedLots[lotIndex]
+            
+            // Calculate weighted average purchase price
+            let existingCost = lot.totalCost
+            let newCost = newPurchasePrice * sharesToAdd
+            let totalNewShares = lot.shares + sharesToAdd
+            let weightedAveragePrice = (existingCost + newCost) / totalNewShares
+            
+            // Update the lot with new shares and weighted average price
+            var updatedLot = lot
+            updatedLot.shares = totalNewShares
+            updatedLot.purchasePrice = weightedAveragePrice
+            updatedLots[lotIndex] = updatedLot
+            
+            // Calculate aggregated values from all lots
+            let totalShares = updatedLots.reduce(0.0) { $0 + $1.shares }
+            let totalCost = updatedLots.reduce(0.0) { $0 + $1.totalCost }
+            let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : existingStock.purchasePrice
+            
+            // Create updated stock
+            let updatedStock = Stock(
+                ticker: existingStock.ticker,
+                companyName: existingStock.companyName,
+                purchasePrice: averagePurchasePrice,
+                shares: Int(totalShares),
+                isMaritalStatus: existingStock.isMaritalStatus,
+                lots: updatedLots
+            )
+            
+            stocks[index] = updatedStock
+            manager.commit(newStock: updatedStock)
+            
+            // Trigger price update to recalculate profit/loss
+            if let priceData = stockPrices[ticker] {
+                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+            } else {
+                updatePrice(for: updatedStock)
+            }
+        }
     }
     
     var totalPortfolioValue: Double {

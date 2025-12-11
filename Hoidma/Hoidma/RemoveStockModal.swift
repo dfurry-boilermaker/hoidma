@@ -4,6 +4,7 @@ struct RemoveStockModal: View {
     @ObservedObject var viewModel: StockViewModel
     @Binding var showingModal: Bool
     let ticker: String
+    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
     
     var body: some View {
         ZStack {
@@ -16,13 +17,13 @@ struct RemoveStockModal: View {
             VStack(spacing: 0) {
                 Text("Remove Stock")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.black)
+                    .foregroundColor(Color.primary)
                     .padding(.top, 24)
                     .padding(.bottom, 16)
                 
                 Text("Are you sure you want to remove \(ticker) from your portfolio?")
                     .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(.gray)
+                    .foregroundColor(Color.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 32)
@@ -44,19 +45,20 @@ struct RemoveStockModal: View {
                     Button {
                         showingModal = false
                     } label: {
-                        Text("Cancel")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 56)
-                            .background(Color.gray.opacity(0.2))
-                            .cornerRadius(12)
+                        Image("cancel")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 48, height: 48)
                     }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(Color.gray.opacity(isDarkMode ? 0.3 : 0.2))
+                    .cornerRadius(12)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
             }
-            .background(Color.white)
+            .background(Color(UIColor.systemBackground))
             .cornerRadius(16)
             .padding(.horizontal, 20)
         }

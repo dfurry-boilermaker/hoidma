@@ -2,13 +2,49 @@ import Foundation
 
 // MARK: - Data Models
 
+/// Defines a single lot of stock in a specific account
+struct StockLot: Codable, Identifiable, Equatable {
+    let id: UUID
+    let accountName: String
+    var shares: Double // Changed to Double to support fractional shares
+    var purchasePrice: Double // Changed to var to allow updating when adding shares
+    
+    init(accountName: String, shares: Double, purchasePrice: Double) {
+        self.id = UUID()
+        self.accountName = accountName
+        self.shares = shares
+        self.purchasePrice = purchasePrice
+    }
+    
+    var totalCost: Double {
+        return purchasePrice * shares
+    }
+    
+    static func == (lhs: StockLot, rhs: StockLot) -> Bool {
+        return lhs.id == rhs.id &&
+               lhs.accountName == rhs.accountName &&
+               lhs.shares == rhs.shares &&
+               lhs.purchasePrice == rhs.purchasePrice
+    }
+}
+
 /// Defines the data structure for a committed stock.
-struct Stock: Codable {
+struct Stock: Codable, Equatable {
     let ticker: String
     var companyName: String
     let purchasePrice: Double
     let shares: Int
     var isMaritalStatus: Bool = false
+    var lots: [StockLot] = [] // Multiple lots in different accounts
+    
+    static func == (lhs: Stock, rhs: Stock) -> Bool {
+        return lhs.ticker == rhs.ticker &&
+               lhs.companyName == rhs.companyName &&
+               lhs.purchasePrice == rhs.purchasePrice &&
+               lhs.shares == rhs.shares &&
+               lhs.isMaritalStatus == rhs.isMaritalStatus &&
+               lhs.lots == rhs.lots
+    }
     
     // Custom decoder to handle migration from old data without companyName
     init(from decoder: Decoder) throws {
@@ -17,6 +53,7 @@ struct Stock: Codable {
         purchasePrice = try container.decode(Double.self, forKey: .purchasePrice)
         shares = try container.decode(Int.self, forKey: .shares)
         isMaritalStatus = try container.decodeIfPresent(Bool.self, forKey: .isMaritalStatus) ?? false
+        lots = try container.decodeIfPresent([StockLot].self, forKey: .lots) ?? []
         // If companyName is missing, use ticker as fallback (will be updated from API)
         companyName = try container.decodeIfPresent(String.self, forKey: .companyName) ?? ticker.uppercased()
     }
@@ -27,15 +64,17 @@ struct Stock: Codable {
         case purchasePrice
         case shares
         case isMaritalStatus
+        case lots
     }
     
     // Regular initializer
-    init(ticker: String, companyName: String, purchasePrice: Double, shares: Int, isMaritalStatus: Bool = false) {
+    init(ticker: String, companyName: String, purchasePrice: Double, shares: Int, isMaritalStatus: Bool = false, lots: [StockLot] = []) {
         self.ticker = ticker
         self.companyName = companyName
         self.purchasePrice = purchasePrice
         self.shares = shares
         self.isMaritalStatus = isMaritalStatus
+        self.lots = lots
     }
     
     // MARK: Financial Calculations
@@ -77,6 +116,9 @@ struct StockPriceData {
     
     // Previous trading day's close price (for accurate daily return calculation)
     var previousClose: Double?
+    
+    // Company logo URL
+    var logoURL: String?
     
     var isGreen: Bool {
         return profitLoss >= 0
