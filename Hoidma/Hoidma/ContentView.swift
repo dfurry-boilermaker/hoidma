@@ -59,6 +59,7 @@ enum NavigationDestination: Hashable {
 struct ContentView: View {
     // The main view model manages the state and logic
     @StateObject private var viewModel = StockViewModel()
+    @EnvironmentObject var authManager: AuthManager
     @State private var showingCommitForm = false
     @State private var showingModal = false
     @State private var selectedTicker: String? = nil
@@ -67,6 +68,7 @@ struct ContentView: View {
     @AppStorage("selectedTab") private var selectedTab: Int = 1
     @State private var showScrollButton: Bool = false
     @State private var initialScrollOffset: CGFloat? = nil
+    @State private var showSignOutAlert = false
     private let scrollThreshold: CGFloat = 50 // Show button after scrolling 50 points (reduced for easier testing)
     
     var body: some View {
@@ -141,7 +143,7 @@ struct ContentView: View {
                         .frame(height: 120) 
                         .ignoresSafeArea(edges: .top)
                     
-                    // Hoidma logo at top-left
+                    // Hoidma logo at top-left with sign-out on long press
                     HStack {
                         Image(isDarkMode ? "hoidma.dark" : "hoidma")
                             .resizable()
@@ -149,6 +151,9 @@ struct ContentView: View {
                             .frame(width: 100, height: 50)
                             .cornerRadius(8)
                             .padding(.leading, 16)
+                            .onLongPressGesture {
+                                showSignOutAlert = true
+                            }
                         
                         Spacer()
                     }
@@ -211,19 +216,30 @@ struct ContentView: View {
                     PortfolioVisualizationsView(viewModel: viewModel)
                 }
             }
+            .alert("Sign Out", isPresented: $showSignOutAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Sign Out", role: .destructive) {
+                    do {
+                        try authManager.signOut()
+                    } catch {
+                        print("Error signing out: \(error.localizedDescription)")
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to sign out? Your portfolio data will remain saved.")
+            }
         }
     }
 }
 
 // MARK: - Preview
 #Preview {
-    // Create 15 fake stocks for testing
-    let fakeStocks: [(ticker: String, companyName: String, price: Double, shares: Double, account: String)] = [
-        ("AAPL", "Apple Inc.", 175.50, 50, "Indv"),
-        ("MSFT", "Microsoft Corporation", 380.25, 30, "401k"),
+    // Create fake stocks for testing - some with multiple accounts
+    // Format: (ticker, companyName, price, shares, account)
+    let fakeStockLots: [(ticker: String, companyName: String, price: Double, shares: Double, account: String)] = [
+        // Stocks in single accounts
         ("GOOGL", "Alphabet Inc.", 140.75, 25, "Roth IRA"),
         ("AMZN", "Amazon.com Inc.", 145.00, 40, "Indv"),
-        ("NVDA", "NVIDIA Corporation", 485.50, 20, "401k"),
         ("META", "Meta Platforms Inc.", 320.00, 35, "Roth IRA"),
         ("TSLA", "Tesla Inc.", 245.75, 60, "Indv"),
         ("JPM", "JPMorgan Chase & Co.", 155.25, 45, "401k"),
@@ -233,20 +249,59 @@ struct ContentView: View {
         ("PG", "Procter & Gamble Co.", 150.00, 35, "Roth IRA"),
         ("MA", "Mastercard Inc.", 420.25, 25, "Indv"),
         ("DIS", "The Walt Disney Company", 95.50, 70, "401k"),
-        ("NFLX", "Netflix Inc.", 425.00, 20, "Roth IRA")
+        ("NFLX", "Netflix Inc.", 425.00, 20, "Roth IRA"),
+        
+        // Shared positions - MSFT in multiple accounts
+        ("MSFT", "Microsoft Corporation", 380.25, 30, "401k"),
+        ("MSFT", "Microsoft Corporation", 385.00, 25, "Roth IRA"),
+        
+        // Shared positions - AAPL in multiple accounts
+        ("AAPL", "Apple Inc.", 175.50, 50, "Indv"),
+        ("AAPL", "Apple Inc.", 176.00, 40, "401k"),
+        
+        // Shared positions - NVDA in multiple accounts
+        ("NVDA", "NVIDIA Corporation", 485.50, 20, "401k"),
+        ("NVDA", "NVIDIA Corporation", 490.00, 15, "Roth IRA"),
+        
+        // Shared positions - JPM in multiple accounts
+        ("JPM", "JPMorgan Chase & Co.", 155.25, 45, "401k"),
+        ("JPM", "JPMorgan Chase & Co.", 156.00, 30, "Roth IRA"),
+        
+        // Shared positions - V in multiple accounts
+        ("V", "Visa Inc.", 250.00, 30, "Roth IRA"),
+        ("V", "Visa Inc.", 251.00, 20, "Indv")
     ]
     
-    // Create stocks array
+    // Create stocks array, grouping by ticker to handle multiple lots
+    var stocksDict: [String: (companyName: String, lots: [StockLot])] = [:]
+    
+    for stockLot in fakeStockLots {
+        let lot = StockLot(accountName: stockLot.account, shares: stockLot.shares, purchasePrice: stockLot.price)
+        
+        if var existing = stocksDict[stockLot.ticker] {
+            // Add lot to existing stock
+            existing.lots.append(lot)
+            stocksDict[stockLot.ticker] = existing
+        } else {
+            // Create new stock entry
+            stocksDict[stockLot.ticker] = (companyName: stockLot.companyName, lots: [lot])
+        }
+    }
+    
+    // Convert dictionary to Stock array
     var stocks: [Stock] = []
-    for stock in fakeStocks {
-        let lot = StockLot(accountName: stock.account, shares: stock.shares, purchasePrice: stock.price)
+    for (ticker, data) in stocksDict {
+        let totalShares = data.lots.reduce(0.0) { $0 + $1.shares }
+        let totalCost = data.lots.reduce(0.0) { $0 + $1.totalCost }
+        let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : 0
+        
         let newStock = Stock(
-            ticker: stock.ticker,
-            companyName: stock.companyName,
-            purchasePrice: stock.price,
-            shares: Int(stock.shares),
+            ticker: ticker,
+            companyName: data.companyName,
+            purchasePrice: averagePurchasePrice,
+            shares: Int(totalShares),
             isMaritalStatus: true,
-            lots: [lot]
+            lots: data.lots
         )
         stocks.append(newStock)
     }

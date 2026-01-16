@@ -1,4 +1,5 @@
 import Foundation
+import SwiftYFinance
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -10,12 +11,16 @@ import SwiftUI
 
 /// Service to fetch real stock data from Yahoo Finance API
 /// 
-/// Uses Yahoo Finance's public API endpoint (no API key required):
-/// - Endpoint: https://query1.finance.yahoo.com/v8/finance/chart/{SYMBOL}
-/// - Returns: Current market price, historical data, and metadata
+/// Uses SwiftYFinance library (maintained Swift wrapper for Yahoo Finance API):
+/// - Library: SwiftYFinance by AlexRoar (https://github.com/AlexRoar/SwiftYFinance)
+/// - Provides: Current market price, historical data, company info, and metadata
 /// - Rate Limits: No official limits, but be respectful (30+ second intervals recommended)
+/// - Benefits: Maintained library, better error handling, async/await support
 /// 
-/// Note: This is an unofficial API endpoint. For production apps, consider:
+/// Note: Yahoo Finance API is unofficial. SwiftYFinance provides a stable interface
+/// that handles endpoint changes and provides better error handling.
+/// 
+/// For production apps with higher reliability needs, consider:
 /// - Alpha Vantage (free tier: 5 calls/min, 500 calls/day)
 /// - IEX Cloud (free tier available)
 /// - Polygon.io (free tier available)
@@ -71,78 +76,75 @@ class StockAPIService {
     /// Fetches the current stock price and company name for a given ticker symbol
     /// - Parameter ticker: Stock ticker symbol (e.g., "AAPL")
     /// - Returns: StockData with price and company name, or nil if fetch fails
+    /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchStockData(for ticker: String) async -> StockData? {
-        let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker.uppercased())"
-        
-        guard let url = URL(string: urlString) else {
-            print("❌ Invalid URL for ticker: \(ticker)")
-            return nil
-        }
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                print("❌ Invalid HTTP response for \(ticker)")
-                return nil
-            }
-            
-            // Parse JSON response
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let chart = json["chart"] as? [String: Any],
-               let result = chart["result"] as? [[String: Any]],
-               let firstResult = result.first,
-               let meta = firstResult["meta"] as? [String: Any],
-               let regularMarketPrice = meta["regularMarketPrice"] as? Double {
-                
-                // Extract company name from meta data - prioritize longName, then shortName
-                // Skip symbol as it's just the ticker
-                var companyName: String
-                if let longName = meta["longName"] as? String, !longName.isEmpty {
-                    companyName = longName
-                } else if let shortName = meta["shortName"] as? String, !shortName.isEmpty, shortName != ticker.uppercased() {
-                    companyName = shortName
-                } else {
-                    // Fallback: use ticker if no proper name found
-                    companyName = ticker.uppercased()
+        return await withCheckedContinuation { continuation in
+            // Fetch recent data using SwiftYFinance
+            SwiftYFinance.recentDataBy(identifier: ticker.uppercased()) { data, error in
+                if let error = error {
+                    print("❌ Error fetching recent data for \(ticker): \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
                 }
                 
-                // Extract percentage changes from meta data
-                var periodChanges: [String: Double] = [:]
-                
-                // Yahoo Finance provides these fields in meta:
-                // - regularMarketChangePercent (latest trading day change as percentage, e.g., 2.5 for 2.5%)
-                // - chartPreviousClose (previous trading day's close price)
-                // We can calculate other periods from historical data
-                
-                // Get previous close price (latest trading day's close)
-                let previousClose = meta["chartPreviousClose"] as? Double
-                
-                if let dayChange = meta["regularMarketChangePercent"] as? Double {
-                    // regularMarketChangePercent is already in percentage format (2.5 = 2.5%)
-                    // This represents the change from the previous trading day's close
-                    periodChanges["1d"] = dayChange
-                    print("📊 Daily change for \(ticker): \(dayChange)% (from previous close: \(previousClose ?? 0))")
+                guard let stock = data else {
+                    print("❌ No data returned for \(ticker)")
+                    continuation.resume(returning: nil)
+                    return
                 }
                 
-                // Fetch percentage changes for other periods (1W, 1M, 3M, YTD)
-                let historicalChanges = await fetchPeriodChanges(for: ticker, currentPrice: regularMarketPrice)
-                periodChanges.merge(historicalChanges) { (_, new) in new }
-                print("📊 Period changes for \(ticker): \(periodChanges)")
+                // Extract price and previous close
+                let price = stock.regularMarketPrice ?? 0
+                let previousClose = stock.previousClose
                 
-                // Fetch company logo from Financial Modeling Prep (free tier)
-                let logoURL = await fetchCompanyLogo(for: ticker)
-                
-                print("✅ Fetched data for \(ticker): $\(regularMarketPrice) - \(companyName)")
-                return StockData(price: regularMarketPrice, companyName: companyName, periodChanges: periodChanges.isEmpty ? nil : periodChanges, previousClose: previousClose, logoURL: logoURL)
-            } else {
-                print("❌ Failed to parse price data for \(ticker)")
-                return nil
+                // Get company name from summary data
+                SwiftYFinance.summaryDataBy(identifier: ticker.uppercased(), selection: [.price, .summaryProfile]) { summaryData, summaryError in
+                    var companyName = ticker.uppercased()
+                    
+                    if let summary = summaryData {
+                        // Try price module first for company name
+                        if let priceModule = summary.price {
+                            if let longName = priceModule.longName, !longName.isEmpty {
+                                companyName = longName
+                            } else if let shortName = priceModule.shortName, !shortName.isEmpty, shortName != ticker.uppercased() {
+                                companyName = shortName
+                            }
+                        }
+                        
+                        // If still using ticker, try summary profile (though it doesn't have name directly)
+                        // The price module should have the name we need
+                    }
+                    
+                    // Fetch percentage changes for different periods
+                    Task {
+                        var periodChanges: [String: Double] = [:]
+                        
+                        // Get daily change from recent data
+                        if let previousClose = previousClose, previousClose > 0 {
+                            let dayChange = ((price - previousClose) / previousClose) * 100
+                            periodChanges["1d"] = dayChange
+                            print("📊 Daily change for \(ticker): \(dayChange)% (from previous close: \(previousClose))")
+                        }
+                        
+                        // Fetch historical changes for other periods
+                        let historicalChanges = await self.fetchPeriodChanges(for: ticker, currentPrice: price)
+                        periodChanges.merge(historicalChanges) { (_, new) in new }
+                        
+                        // Fetch company logo
+                        let logoURL = await self.fetchCompanyLogo(for: ticker)
+                        
+                        print("✅ Fetched data for \(ticker): $\(price) - \(companyName)")
+                        let stockData = StockData(
+                            price: price,
+                            companyName: companyName,
+                            periodChanges: periodChanges.isEmpty ? nil : periodChanges,
+                            previousClose: previousClose,
+                            logoURL: logoURL
+                        )
+                        continuation.resume(returning: stockData)
+                    }
+                }
             }
-        } catch {
-            print("❌ Error fetching data for \(ticker): \(error.localizedDescription)")
-            return nil
         }
     }
     
@@ -154,53 +156,48 @@ class StockAPIService {
     private func fetchPeriodChanges(for ticker: String, currentPrice: Double) async -> [String: Double] {
         var periodChanges: [String: Double] = [:]
         
-        // Fetch data for different periods to calculate percentage changes
-        let periods: [(String, String)] = [
-            ("1w", "5d"),  // 1 week - use 5 day range (trading days)
-            ("1m", "1mo"), // 1 month
-            ("3m", "3mo"), // 3 months
-            ("ytd", "ytd") // Year to date
+        // Define periods with their date ranges
+        let now = Date()
+        let calendar = Calendar.current
+        let periods: [(String, Date)] = [
+            ("1w", calendar.date(byAdding: .day, value: -7, to: now) ?? now),
+            ("1m", calendar.date(byAdding: .month, value: -1, to: now) ?? now),
+            ("3m", calendar.date(byAdding: .month, value: -3, to: now) ?? now),
+            ("ytd", calendar.date(from: calendar.dateComponents([.year], from: now)) ?? now)
         ]
         
         print("🔄 Fetching period changes for \(ticker): \(periods.map { $0.0 })")
         
         await withTaskGroup(of: (String, Double?).self) { group in
-            for (periodKey, apiRange) in periods {
+            for (periodKey, startDate) in periods {
                 group.addTask {
-                    let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker.uppercased())?interval=1d&range=\(apiRange)"
-                    
-                    guard let url = URL(string: urlString) else {
-                        return (periodKey, nil)
-                    }
-                    
-                    do {
-                        let (data, response) = try await URLSession.shared.data(from: url)
-                        
-                        guard let httpResponse = response as? HTTPURLResponse,
-                              httpResponse.statusCode == 200 else {
-                            return (periodKey, nil)
+                    return await withCheckedContinuation { continuation in
+                        // Use SwiftYFinance to fetch chart data
+                        SwiftYFinance.chartDataBy(
+                            identifier: ticker.uppercased(),
+                            start: startDate,
+                            end: now,
+                            interval: .oneday
+                        ) { chartData, error in
+                            if let error = error {
+                                print("❌ Error fetching period change for \(periodKey): \(error.localizedDescription)")
+                                continuation.resume(returning: (periodKey, nil))
+                                return
+                            }
+                            
+                            // Get the first (oldest) price from the chart data
+                            if let chart = chartData,
+                               let first = chart.first,
+                               let startPrice = first.close,
+                               startPrice > 0 {
+                                // Calculate percentage change
+                                let change = ((currentPrice - startPrice) / startPrice) * 100
+                                continuation.resume(returning: (periodKey, change))
+                            } else {
+                                continuation.resume(returning: (periodKey, nil))
+                            }
                         }
-                        
-                        // Parse to get the first (oldest) price in the range
-                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                           let chart = json["chart"] as? [String: Any],
-                           let result = chart["result"] as? [[String: Any]],
-                           let firstResult = result.first,
-                           let indicators = firstResult["indicators"] as? [String: Any],
-                           let quote = indicators["quote"] as? [[String: Any]],
-                           let firstQuote = quote.first,
-                           let close = firstQuote["close"] as? [Double?],
-                           let startPrice = close.compactMap({ $0 }).first,
-                           startPrice > 0 {
-                            // Calculate percentage change
-                            let change = ((currentPrice - startPrice) / startPrice) * 100
-                            return (periodKey, change)
-                        }
-                    } catch {
-                        print("❌ Error fetching period change for \(periodKey): \(error.localizedDescription)")
                     }
-                    
-                    return (periodKey, nil)
                 }
             }
             
@@ -281,100 +278,92 @@ class StockAPIService {
     /// Fetches historical price for a specific time period
     /// - Parameters:
     ///   - ticker: Stock ticker symbol
-    ///   - period: Time period (1d, 5d, 1mo, 3mo, 1y)
+    ///   - period: Time period string (1d, 5d, 1mo, 3mo, 1y) - converted to Date range
     /// - Returns: Price as Double (closing price from the start of the period), or nil if fetch fails
+    /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchHistoricalPrice(for ticker: String, period: String) async -> Double? {
-        let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker.uppercased())?interval=1d&range=\(period)"
+        let calendar = Calendar.current
+        let now = Date()
+        let startDate: Date
         
-        guard let url = URL(string: urlString) else {
-            print("❌ Invalid URL for historical price: \(ticker)")
-            return nil
+        // Convert period string to Date
+        switch period.lowercased() {
+        case "1d", "5d":
+            startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
+        case "1mo":
+            startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+        case "3mo":
+            startDate = calendar.date(byAdding: .month, value: -3, to: now) ?? now
+        case "1y":
+            startDate = calendar.date(byAdding: .year, value: -1, to: now) ?? now
+        default:
+            startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
         }
         
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                print("❌ Invalid HTTP response for historical \(ticker)")
-                return nil
+        return await withCheckedContinuation { continuation in
+            SwiftYFinance.chartDataBy(
+                identifier: ticker.uppercased(),
+                start: startDate,
+                end: now,
+                interval: .oneday
+            ) { chartData, error in
+                if let error = error {
+                    print("❌ Error fetching historical price for \(ticker): \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                // Get the first (oldest) price from the chart data
+                if let chart = chartData,
+                   let first = chart.first,
+                   let price = first.close {
+                    continuation.resume(returning: price)
+                } else {
+                    continuation.resume(returning: nil)
+                }
             }
-            
-            // Parse JSON response to get historical prices
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let chart = json["chart"] as? [String: Any],
-               let result = chart["result"] as? [[String: Any]],
-               let firstResult = result.first,
-               let indicators = firstResult["indicators"] as? [String: Any],
-               let quote = indicators["quote"] as? [[String: Any]],
-               let firstQuote = quote.first,
-               let close = firstQuote["close"] as? [Double?],
-               let firstValidPrice = close.compactMap({ $0 }).first {
-                // Get the first (oldest) price from the period
-                return firstValidPrice
-            }
-            
-            return nil
-        } catch {
-            print("❌ Error fetching historical price for \(ticker): \(error.localizedDescription)")
-            return nil
         }
     }
     
     /// Fetches historical prices for all time periods
     /// - Parameter ticker: Stock ticker symbol
     /// - Returns: Dictionary mapping period to price, or nil if fetch fails
+    /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchHistoricalPrices(for ticker: String) async -> [String: Double]? {
         var historicalPrices: [String: Double] = [:]
+        let calendar = Calendar.current
+        let now = Date()
         
         // Fetch prices for different periods concurrently
         await withTaskGroup(of: (String, Double?).self) { group in
-            // 1 day ago
+            // 1 day ago (use 5 day range to ensure we get data)
             group.addTask {
-                let price = await self.fetchHistoricalPrice(for: ticker, period: "5d")
-                return ("1d", price)
+                let startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
+                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "1d")
             }
             
             // 1 week ago
             group.addTask {
-                let price = await self.fetchHistoricalPrice(for: ticker, period: "1mo")
-                return ("1w", price)
+                let startDate = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "1w")
             }
             
             // 1 month ago
             group.addTask {
-                let price = await self.fetchHistoricalPrice(for: ticker, period: "3mo")
-                return ("1m", price)
+                let startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "1m")
             }
             
             // 3 months ago
             group.addTask {
-                let price = await self.fetchHistoricalPrice(for: ticker, period: "6mo")
-                return ("3m", price)
+                let startDate = calendar.date(byAdding: .month, value: -3, to: now) ?? now
+                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "3m")
             }
             
             // Year to date (start of current year)
             group.addTask {
-                let calendar = Calendar.current
-                let now = Date()
                 if let startOfYear = calendar.date(from: calendar.dateComponents([.year], from: now)) {
-                    let period1 = Int(startOfYear.timeIntervalSince1970)
-                    let period2 = Int(now.timeIntervalSince1970)
-                    let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker.uppercased())?interval=1d&period1=\(period1)&period2=\(period2)"
-                    
-                    if let url = URL(string: urlString),
-                       let (data, _) = try? await URLSession.shared.data(from: url),
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let chart = json["chart"] as? [String: Any],
-                       let result = chart["result"] as? [[String: Any]],
-                       let firstResult = result.first,
-                       let indicators = firstResult["indicators"] as? [String: Any],
-                       let quote = indicators["quote"] as? [[String: Any]],
-                       let firstQuote = quote.first,
-                       let close = firstQuote["close"] as? [Double?],
-                       let firstValidPrice = close.compactMap({ $0 }).first {
-                        return ("ytd", firstValidPrice)
-                    }
+                    return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startOfYear, end: now, periodKey: "ytd")
                 }
                 return ("ytd", nil)
             }
@@ -387,6 +376,32 @@ class StockAPIService {
         }
         
         return historicalPrices.isEmpty ? nil : historicalPrices
+    }
+    
+    /// Helper function to fetch historical price for a date range using SwiftYFinance
+    private func fetchHistoricalPriceForDateRange(ticker: String, start: Date, end: Date, periodKey: String) async -> (String, Double?) {
+        return await withCheckedContinuation { continuation in
+            SwiftYFinance.chartDataBy(
+                identifier: ticker.uppercased(),
+                start: start,
+                end: end,
+                interval: .oneday
+            ) { chartData, error in
+                if let error = error {
+                    print("❌ Error fetching \(periodKey) price for \(ticker): \(error.localizedDescription)")
+                    continuation.resume(returning: (periodKey, nil))
+                    return
+                }
+                
+                if let chart = chartData,
+                   let first = chart.first,
+                   let price = first.close {
+                    continuation.resume(returning: (periodKey, price))
+                } else {
+                    continuation.resume(returning: (periodKey, nil))
+                }
+            }
+        }
     }
     
     /// Fetches company logo URL using fallback services

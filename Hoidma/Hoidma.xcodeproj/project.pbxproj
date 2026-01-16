@@ -112,6 +112,10 @@
 			);
 			name = Hoidma;
 			packageProductDependencies = (
+				F4AEC9182EBEC27D00CC4321 /* FirebaseCore */,
+				F4AEC9162EBEC27D00CC4321 /* FirebaseAuth */,
+				F4AEC9172EBEC27D00CC4321 /* FirebaseFirestore */,
+				F4AEC91A2EBEC27D00CC4321 /* SwiftYFinance */,
 			);
 			productName = Hoidma;
 			productReference = F4AEC8EB2EBEC27B00CC4321 /* Hoidma.app */;
@@ -196,6 +200,10 @@
 			mainGroup = F4AEC8E22EBEC27B00CC4321;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				F4AEC9192EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "SwiftYFinance" */,
+			);
 			productRefGroup = F4AEC8EC2EBEC27B00CC4321 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -570,6 +578,48 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 10.19.0;
+			};
+		};
+		F4AEC9192EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "SwiftYFinance" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/AlexRoar/SwiftYFinance";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.4.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F4AEC9162EBEC27D00CC4321 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		F4AEC9172EBEC27D00CC4321 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		F4AEC9182EBEC27D00CC4321 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		F4AEC91A2EBEC27D00CC4321 /* SwiftYFinance */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4AEC9192EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "SwiftYFinance" */;
+			productName = SwiftYFinance;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = F4AEC8E32EBEC27B00CC4321 /* Project object */;
 }

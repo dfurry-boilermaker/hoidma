@@ -96,11 +96,7 @@ class StockViewModel: ObservableObject {
                 stocks[localIndex] = updatedStock
             }
             
-            // Save to UserDefaults
-            if let encoded = try? JSONEncoder().encode(manager.stocks) {
-                UserDefaults.standard.set(encoded, forKey: "committedStocks")
-            }
-            
+            // Stock is already saved to Firestore via manager.commit in FirebaseManager
             print("✅ Updated company name for \(ticker) to \(newName)")
         }
     }
