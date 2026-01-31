@@ -118,12 +118,12 @@ struct AddStockFormView: View {
                 } label: {
                     Text("Add")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(Color(red: 0.231, green: 0.706, blue: 0.494))
+                        .foregroundColor(AppColors.positive)
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color(red: 0.231, green: 0.706, blue: 0.494), lineWidth: 1)
+                                .stroke(AppColors.positive, lineWidth: 1)
                         )
                 }
                 .padding(.top, 8)

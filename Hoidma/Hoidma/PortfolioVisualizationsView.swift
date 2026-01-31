@@ -6,56 +6,7 @@ struct PortfolioVisualizationsView: View {
     @AppStorage("selectedTab") private var selectedTab: Int = 1
     @State private var showDollarAmounts: Bool = false
     @Environment(\.dismiss) var dismiss
-    
-    // Helper function to generate consistent colors for ticker symbols
-    private func colorForTicker(_ ticker: String) -> Color {
-        var hash = 0
-        for char in ticker.uppercased() {
-            hash = Int(char.asciiValue ?? 0) + ((hash << 5) - hash)
-        }
-        
-        // Ensure hash is positive
-        hash = abs(hash)
-        
-        // Use modulo to get better distribution for RGB components
-        // This ensures we get a good range of colors
-        let r = Double((hash & 0xFF0000) >> 16) / 255.0
-        let g = Double((hash & 0x00FF00) >> 8) / 255.0
-        let b = Double(hash & 0x0000FF) / 255.0
-        
-        // Use HSL-like approach for better color vibrancy
-        // Calculate brightness and adjust to ensure visibility
-        let brightness = (r * 0.299 + g * 0.587 + b * 0.114)
-        let minBrightness: Double = 0.4
-        let maxBrightness: Double = 0.85
-        
-        // Adjust brightness while maintaining color relationships
-        var adjustedR = r
-        var adjustedG = g
-        var adjustedB = b
-        
-        if brightness < minBrightness {
-            // Too dark - brighten proportionally
-            let scale = minBrightness / brightness
-            adjustedR = min(r * scale, 1.0)
-            adjustedG = min(g * scale, 1.0)
-            adjustedB = min(b * scale, 1.0)
-        } else if brightness > maxBrightness {
-            // Too light - darken proportionally
-            let scale = maxBrightness / brightness
-            adjustedR = r * scale
-            adjustedG = g * scale
-            adjustedB = b * scale
-        }
-        
-        // Ensure minimum values for visibility
-        adjustedR = max(adjustedR, 0.2)
-        adjustedG = max(adjustedG, 0.2)
-        adjustedB = max(adjustedB, 0.2)
-        
-        return Color(red: adjustedR, green: adjustedG, blue: adjustedB)
-    }
-    
+
     // Calculate portfolio data for visualizations
     private var portfolioData: [(ticker: String, value: Double, percentage: Double, color: Color)] {
         let stocks = viewModel.stocks.filter { $0.isMaritalStatus }
@@ -74,6 +25,31 @@ struct PortfolioVisualizationsView: View {
         }
         
         return data.sorted { $0.value > $1.value }
+    }
+    
+    // Calculate all positions across accounts (both shared and single-account)
+    private var allPositionsData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)] {
+        let stocks = viewModel.stocks.filter { $0.isMaritalStatus }
+        var allData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)] = []
+        
+        for stock in stocks {
+            // Get unique account names from lots
+            let uniqueAccounts = Set(stock.lots.map { $0.accountName })
+            let accounts = Array(uniqueAccounts).sorted()
+            
+            // Include all stocks (both single and multi-account)
+            // Calculate total value for this stock
+            if let priceData = viewModel.stockPrices[stock.ticker] {
+                let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
+                let stockValue = priceData.currentPrice * totalShares
+                
+                if stockValue > 0 {
+                    allData.append((stock.ticker, accounts, stockValue, colorForTicker(stock.ticker)))
+                }
+            }
+        }
+        
+        return allData.sorted { $0.totalValue > $1.totalValue }
     }
     
     var body: some View {
@@ -178,25 +154,25 @@ struct PortfolioVisualizationsView: View {
                             }
                             .padding(.horizontal, 20)
                             
-                            // Placeholder for additional visualizations
-                            VStack(spacing: 16) {
-                                // HStack {
-                                //     Text("Additional Visualizations")
-                                //         .font(.system(size: 18, weight: .semibold))
-                                //         .foregroundColor(Color.primary)
-                                //     Spacer()
-                                // }
-                                
-                                Text("More visualizations coming soon...")
-                                    .font(.system(size: 14, weight: .regular))
-                                    .foregroundColor(Color.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            // All Positions Across Accounts Section (Venn Diagram)
+                            if !allPositionsData.isEmpty {
+                                VStack(spacing: 16) {
+                                    HStack {
+                                        Text("Positions by Account")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundColor(Color.primary)
+                                        Spacer()
+                                    }
+                                    
+                                    SharedPositionsView(
+                                        sharedData: allPositionsData,
+                                        showDollarAmounts: showDollarAmounts
+                                    )
+                                }
+                                .padding(20)
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 20)
                             }
-                            .padding(20)
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .cornerRadius(12)
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 20)
                         } else {
                             // Empty state
                             VStack(spacing: 16) {
@@ -552,4 +528,45 @@ struct RadialBarSegment: View {
         }
     }
 }
+
+// Shared Positions Visualization - Euler Diagram Style
+struct SharedPositionsView: View {
+    let sharedData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)]
+    let showDollarAmounts: Bool
+    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    
+    // Get all unique accounts
+    private var allAccounts: [String] {
+        let accountSet = Set(sharedData.flatMap { $0.accounts })
+        return Array(accountSet).sorted()
+    }
+    
+    // Calculate total value per account
+    private var accountValues: [String: Double] {
+        var values: [String: Double] = [:]
+        for item in sharedData {
+            for account in item.accounts {
+                values[account, default: 0] += item.totalValue
+            }
+        }
+        return values
+    }
+    
+    var body: some View {
+        if !allAccounts.isEmpty {
+            EulerDiagramView(
+                accounts: allAccounts,
+                sharedData: sharedData,
+                accountValues: accountValues,
+                showDollarAmounts: showDollarAmounts
+            )
+        } else {
+            Text("No positions to display")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundColor(Color.secondary)
+                .padding()
+        }
+    }
+}
+
 

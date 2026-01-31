@@ -1,0 +1,18 @@
+{
+  "configurations" : [
+    {
+      "id" : "D16C85BE-0881-4ADF-978D-42267213430A",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+
+  ],
+  "version" : 1
+}
