@@ -5,11 +5,17 @@ import SwiftUI
 class StockViewModel: ObservableObject {
     @Published var stocks: [Stock] = []
     @Published var stockPrices: [String: StockPriceData] = [:]
-    
+
     // Used to update prices every 30 seconds (reduced frequency to respect API limits)
     private var timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
-    
-    // The placeholder Firebase Manager
+
+    private let localStorageKey = "localStocks"
+
+    // Use centralized environment configuration
+    private var useLocalStorage: Bool { AppEnvironment.useLocalStorage }
+    private var isUITesting: Bool { AppEnvironment.isUITesting }
+
+    // The placeholder Firebase Manager (only used if not using local storage)
     let manager = FirebaseManager()
     
     // API service for fetching real stock data
@@ -18,38 +24,115 @@ class StockViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     init() {
-        manager.startDataListener()
+        if useLocalStorage {
+            // Load from local storage
+            loadLocalStocks()
+        } else {
+            // Use Firebase
+            manager.startDataListener()
+            
+            // Monitor stocks from the Firebase Manager
+            manager.$stocks
+                .sink { [weak self] newStocks in
+                    guard let self = self else { return }
+                    self.stocks = newStocks
+                    // Initialize prices for new stocks using API (skip in UI tests)
+                    if !self.isUITesting {
+                        Task {
+                            await self.updateAllPrices()
+                        }
+                    }
+                }
+                .store(in: &cancellables)
+        }
         
-        // Monitor stocks from the Firebase Manager
-        manager.$stocks
-            .sink { [weak self] newStocks in
-                guard let self = self else { return }
-                self.stocks = newStocks
-                // Initialize prices for new stocks using API
-                Task {
+        // Start the price update timer (fetches real data from API) - SKIP IN UI TESTS
+        if !isUITesting {
+            timer
+                .sink { [weak self] _ in
+                    guard let self = self else { return }
+                    Task {
+                        await self.updateAllPrices()
+                    }
+                }
+                .store(in: &cancellables)
+        } else {
+            AppEnvironment.testingLog(" Price update timer disabled")
+        }
+    }
+    
+    // Load stocks from local storage
+    private func loadLocalStocks() {
+        if let data = UserDefaults.standard.data(forKey: localStorageKey),
+           let decoded = try? JSONDecoder().decode([Stock].self, from: data) {
+            let sanitizedStocks = decoded.compactMap { stock -> Stock? in
+                let trimmedTicker = stock.ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedTicker.isEmpty else { return nil }
+                let normalizedTicker = trimmedTicker.uppercased()
+                if normalizedTicker == stock.ticker {
+                    return stock
+                }
+                return Stock(
+                    ticker: normalizedTicker,
+                    companyName: stock.companyName,
+                    purchasePrice: stock.purchasePrice,
+                    shares: stock.shares,
+                    isMaritalStatus: stock.isMaritalStatus,
+                    lots: stock.lots
+                )
+            }
+            self.stocks = sanitizedStocks.filter { $0.isMaritalStatus }
+            print("✅ Loaded \(self.stocks.count) stocks from local storage")
+            
+            // Initialize prices for loaded stocks (SKIP IN UI TESTS to prevent crashes)
+            if !isUITesting {
+                // Defer price updates to avoid blocking initialization
+                Task { @MainActor in
                     await self.updateAllPrices()
                 }
-            }
-            .store(in: &cancellables)
-        
-        // Start the price update timer (fetches real data from API)
-        timer
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                Task {
-                    await self.updateAllPrices()
+            } else {
+                // In UI tests, just set placeholder prices to avoid API calls
+                // Do this synchronously on main thread to avoid async issues
+                AppEnvironment.testingLog(" Setting placeholder prices for \(self.stocks.count) stocks")
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    for stock in self.stocks {
+                        let placeholderPrice = stock.purchasePrice * 1.1 // 10% gain
+                        self.updatePriceData(for: stock, newPrice: placeholderPrice)
+                    }
                 }
             }
-            .store(in: &cancellables)
+        } else {
+            print("📭 No local stocks found, starting with empty portfolio")
+        }
+    }
+    
+    // Save stocks to local storage
+    private func saveLocalStocks() {
+        // UserDefaults is fast for small datasets, so synchronous is fine
+        if let encoded = try? JSONEncoder().encode(stocks) {
+            UserDefaults.standard.set(encoded, forKey: localStorageKey)
+            print("✅ Saved \(stocks.count) stocks to local storage")
+        } else {
+            print("❌ Failed to save stocks to local storage")
+        }
     }
     
     /// Updates prices for all stocks using the API
     @MainActor
     func updateAllPrices() async {
-        let activeStocks = stocks.filter { $0.isMaritalStatus }
+        // SKIP API CALLS IN UI TESTS to prevent crashes
+        if isUITesting {
+            AppEnvironment.testingLog(" Skipping updateAllPrices()")
+            return
+        }
+        
+        let activeStocks = stocks.filter { stock in
+            stock.isMaritalStatus && !stock.ticker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         guard !activeStocks.isEmpty else { return }
         
-        let tickers = activeStocks.map { $0.ticker }
+        let tickers = activeStocks.map { $0.ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
         
         // Fetch both prices and company names
         let stockDataDict = await apiService.fetchStockData(for: tickers)
@@ -103,7 +186,17 @@ class StockViewModel: ObservableObject {
     
     /// Updates price for a single stock (async version for API calls)
     func updatePrice(for stock: Stock) {
-        guard stock.isMaritalStatus else { return }
+        let trimmedTicker = stock.ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard stock.isMaritalStatus, !trimmedTicker.isEmpty else { return }
+        
+        // SKIP API CALLS IN UI TESTS
+        if isUITesting {
+            AppEnvironment.testingLog(" Skipping updatePrice for \(stock.ticker)")
+            // Set placeholder price
+            let placeholderPrice = stock.purchasePrice * 1.1
+            updatePriceData(for: stock, newPrice: placeholderPrice)
+            return
+        }
         
         Task {
             let isNewStock = await MainActor.run { stockPrices[stock.ticker] == nil }
@@ -294,61 +387,155 @@ class StockViewModel: ObservableObject {
     }
     
     func commitStock(ticker: String, price: Double, shares: Double, accountName: String = "Main") {
-        Task {
-            // Fetch company name from API
-            let companyName: String
-            if let stockData = await apiService.fetchStockData(for: ticker) {
-                companyName = stockData.companyName
+        // IMMEDIATELY add stock with placeholder name (don't wait for API)
+        // This prevents UI freezing
+        let placeholderCompanyName = ticker.uppercased()
+        
+        // Check if stock already exists
+        if let existingIndex = stocks.firstIndex(where: { $0.ticker == ticker }) {
+            // Add the new lot to existing stock
+            let existingStock = stocks[existingIndex]
+            let newLot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
+            var updatedLots = existingStock.lots
+            updatedLots.append(newLot)
+            
+            // Calculate aggregated values from all lots
+            let totalShares = updatedLots.reduce(0.0) { $0 + $1.shares }
+            let totalCost = updatedLots.reduce(0.0) { $0 + $1.totalCost }
+            let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : price
+            
+            // Create updated stock with all lots and aggregated values
+            // Use existing company name if available, otherwise placeholder
+            let companyName = existingStock.companyName.isEmpty || existingStock.companyName == existingStock.ticker.uppercased() ? placeholderCompanyName : existingStock.companyName
+            let updatedStock = Stock(
+                ticker: ticker,
+                companyName: companyName,
+                purchasePrice: averagePurchasePrice,
+                shares: Int(totalShares),
+                isMaritalStatus: true, // Mark as committed
+                lots: updatedLots
+            )
+            stocks[existingIndex] = updatedStock
+            
+            // FOR TESTING: Save locally immediately (synchronous, fast)
+            if useLocalStorage {
+                saveLocalStocks()
             } else {
-                // Fallback to ticker if API fails
-                companyName = ticker.uppercased()
+                manager.commit(newStock: updatedStock)
             }
             
-            await MainActor.run {
-                // Check if stock already exists
-                if let existingIndex = stocks.firstIndex(where: { $0.ticker == ticker }) {
-                    // Add the new lot to existing stock
-                    let existingStock = stocks[existingIndex]
-                    let newLot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
-                    var updatedLots = existingStock.lots
-                    updatedLots.append(newLot)
-                    
-                    // Calculate aggregated values from all lots
-                    let totalShares = updatedLots.reduce(0.0) { $0 + $1.shares }
-                    let totalCost = updatedLots.reduce(0.0) { $0 + $1.totalCost }
-                    let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : price
-                    
-                    // Create updated stock with all lots and aggregated values
-                    let updatedStock = Stock(
-                        ticker: ticker,
-                        companyName: companyName,
-                        purchasePrice: averagePurchasePrice,
-                        shares: Int(totalShares),
-                        isMaritalStatus: existingStock.isMaritalStatus,
-                        lots: updatedLots
-                    )
-                    stocks[existingIndex] = updatedStock
-                    manager.commit(newStock: updatedStock)
-                    
-                    // Trigger price update to recalculate profit/loss with new aggregated values
-                    if let priceData = stockPrices[ticker] {
-                        updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
-                    } else {
-                        updatePrice(for: updatedStock)
+            // Trigger price update to recalculate profit/loss with new aggregated values
+            if let priceData = stockPrices[ticker] {
+                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+            } else {
+            // Fetch price in background (don't block)
+            Task { @MainActor [weak self] in
+                await self?.updatePriceFast(for: updatedStock)
+            }
+            }
+        } else {
+            // Create new stock with the lot
+            let lot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
+            let newStock = Stock(ticker: ticker, companyName: placeholderCompanyName, purchasePrice: price, shares: Int(shares), isMaritalStatus: true, lots: [lot])
+            stocks.append(newStock)
+            
+            // FOR TESTING: Save locally immediately (synchronous, fast)
+            if useLocalStorage {
+                saveLocalStocks()
+            } else {
+                manager.commit(newStock: newStock)
+            }
+            
+            // Show placeholder price immediately, then fetch real price in background
+            // This prevents UI freeze
+            let placeholderPrice = price // Use purchase price as placeholder
+            updatePriceData(for: newStock, newPrice: placeholderPrice)
+            
+            // Fetch real price and company name in background (non-blocking)
+            Task { @MainActor [weak self] in
+                await self?.updatePriceFast(for: newStock)
+                await self?.updateCompanyNameAsync(for: ticker)
+            }
+        }
+    }
+    
+    // Fast price update without historical data (for immediate UI updates)
+    @MainActor
+    private func updatePriceFast(for stock: Stock) async {
+        let trimmedTicker = stock.ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard stock.isMaritalStatus, !trimmedTicker.isEmpty else { return }
+        
+        // SKIP API CALLS IN UI TESTS
+        if isUITesting {
+            AppEnvironment.testingLog(" Skipping updatePriceFast for \(stock.ticker)")
+            // Set placeholder price
+            let placeholderPrice = stock.purchasePrice * 1.1
+            updatePriceData(for: stock, newPrice: placeholderPrice)
+            return
+        }
+        
+        // Just fetch current price, skip historical data for now
+        if let stockData = await apiService.fetchStockData(for: stock.ticker) {
+            updatePriceData(for: stock, newPrice: stockData.price, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose, logoURL: stockData.logoURL)
+            
+            // Fetch historical prices in background after showing current price
+            Task { @MainActor [weak self] in
+                let historicalPrices = await self?.apiService.fetchHistoricalPrices(for: stock.ticker)
+                if let historicalPrices = historicalPrices, let self = self {
+                    // Update with historical data if we have it
+                    if let existingData = self.stockPrices[stock.ticker] {
+                        self.updatePriceData(
+                            for: stock,
+                            newPrice: existingData.currentPrice,
+                            historicalPrices: historicalPrices,
+                            apiPeriodChanges: existingData.apiPeriodChanges,
+                            previousClose: existingData.previousClose,
+                            logoURL: existingData.logoURL
+                        )
                     }
-                } else {
-                    // Create new stock with the lot
-                    let lot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
-                    let newStock = Stock(ticker: ticker, companyName: companyName, purchasePrice: price, shares: Int(shares), lots: [lot])
-                    manager.commit(newStock: newStock)
                 }
+            }
+        } else {
+            // Fallback to mock price if API fails
+            print("⚠️ API failed for \(stock.ticker), using fallback price")
+            let fallbackPrice = stock.mockCurrentPrice
+            updatePriceData(for: stock, newPrice: fallbackPrice)
+        }
+    }
+    
+    // Update company name in background
+    @MainActor
+    private func updateCompanyNameAsync(for ticker: String) async {
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTicker.isEmpty else { return }
+        // SKIP API CALLS IN UI TESTS
+        if isUITesting {
+            AppEnvironment.testingLog(" Skipping updateCompanyNameAsync for \(ticker)")
+            return
+        }
+        
+        if let stockData = await apiService.fetchStockData(for: trimmedTicker),
+           let index = stocks.firstIndex(where: { $0.ticker == ticker }),
+           stockData.companyName != trimmedTicker.uppercased() && !stockData.companyName.isEmpty {
+            // Update company name if we got a real one from API
+            stocks[index].companyName = stockData.companyName
+            if useLocalStorage {
+                saveLocalStocks()
             }
         }
     }
     
     func removeStock(ticker: String) {
-        manager.removeStock(ticker: ticker)
+        // Remove from local array
+        stocks.removeAll { $0.ticker == ticker }
         stockPrices.removeValue(forKey: ticker)
+        
+        // FOR TESTING: Save locally instead of Firebase
+        if useLocalStorage {
+            saveLocalStocks()
+        } else {
+            manager.removeStock(ticker: ticker)
+        }
     }
     
     func updateStockLots(ticker: String, lots: [StockLot]) {
@@ -370,7 +557,13 @@ class StockViewModel: ObservableObject {
                 lots: lots
             )
             stocks[index] = newStock
-            manager.commit(newStock: newStock)
+            
+            // FOR TESTING: Save locally instead of Firebase
+            if useLocalStorage {
+                saveLocalStocks()
+            } else {
+                manager.commit(newStock: newStock)
+            }
             
             // Trigger price update to recalculate profit/loss with new aggregated values
             if let priceData = stockPrices[ticker] {
@@ -427,7 +620,13 @@ class StockViewModel: ObservableObject {
             )
             
             stocks[index] = updatedStock
-            manager.commit(newStock: updatedStock)
+            
+            // FOR TESTING: Save locally instead of Firebase
+            if useLocalStorage {
+                saveLocalStocks()
+            } else {
+                manager.commit(newStock: updatedStock)
+            }
             
             // Trigger price update to recalculate profit/loss
             if let priceData = stockPrices[ticker] {
@@ -479,7 +678,13 @@ class StockViewModel: ObservableObject {
             )
             
             stocks[index] = updatedStock
-            manager.commit(newStock: updatedStock)
+            
+            // FOR TESTING: Save locally instead of Firebase
+            if useLocalStorage {
+                saveLocalStocks()
+            } else {
+                manager.commit(newStock: updatedStock)
+            }
             
             // Trigger price update to recalculate profit/loss
             if let priceData = stockPrices[ticker] {

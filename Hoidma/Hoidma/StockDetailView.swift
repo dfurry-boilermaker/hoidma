@@ -15,7 +15,7 @@ struct StockDetailView: View {
     
     // Get the current stock from view model to reflect updates - cached to avoid repeated lookups
     @State private var cachedStock: Stock?
-    
+
     private var currentStock: Stock {
         if let cached = cachedStock {
             return cached
@@ -24,56 +24,7 @@ struct StockDetailView: View {
         cachedStock = found
         return found
     }
-    
-    // Helper function to generate consistent colors for ticker symbols (same as visualization page)
-    private func colorForTicker(_ ticker: String) -> Color {
-        var hash = 0
-        for char in ticker.uppercased() {
-            hash = Int(char.asciiValue ?? 0) + ((hash << 5) - hash)
-        }
-        
-        // Ensure hash is positive
-        hash = abs(hash)
-        
-        // Use modulo to get better distribution for RGB components
-        // This ensures we get a good range of colors
-        let r = Double((hash & 0xFF0000) >> 16) / 255.0
-        let g = Double((hash & 0x00FF00) >> 8) / 255.0
-        let b = Double(hash & 0x0000FF) / 255.0
-        
-        // Use HSL-like approach for better color vibrancy
-        // Calculate brightness and adjust to ensure visibility
-        let brightness = (r * 0.299 + g * 0.587 + b * 0.114)
-        let minBrightness: Double = 0.4
-        let maxBrightness: Double = 0.85
-        
-        // Adjust brightness while maintaining color relationships
-        var adjustedR = r
-        var adjustedG = g
-        var adjustedB = b
-        
-        if brightness < minBrightness {
-            // Too dark - brighten proportionally
-            let scale = minBrightness / brightness
-            adjustedR = min(r * scale, 1.0)
-            adjustedG = min(g * scale, 1.0)
-            adjustedB = min(b * scale, 1.0)
-        } else if brightness > maxBrightness {
-            // Too light - darken proportionally
-            let scale = maxBrightness / brightness
-            adjustedR = r * scale
-            adjustedG = g * scale
-            adjustedB = b * scale
-        }
-        
-        // Ensure minimum values for visibility
-        adjustedR = max(adjustedR, 0.2)
-        adjustedG = max(adjustedG, 0.2)
-        adjustedB = max(adjustedB, 0.2)
-        
-        return Color(red: adjustedR, green: adjustedG, blue: adjustedB)
-    }
-    
+
     var body: some View {
         ZStack {
             Color(UIColor.systemBackground)
@@ -344,7 +295,7 @@ struct DetailRow: View {
             if isProfitLoss {
                 Text(value)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(value.hasPrefix("+") || !value.hasPrefix("-") ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                    .foregroundColor(value.hasPrefix("+") || !value.hasPrefix("-") ? AppColors.positive : Color.red)
             } else {
                 Text(value)
                     .font(.system(size: 14, weight: .semibold))
@@ -407,7 +358,7 @@ struct LotRow: View {
                     let profitLossString = "\((lotProfitLoss >= 0 ? "+" : ""))\(lotProfitLoss.formatted(.currency(code: "USD"))) (\(profitLossPercent >= 0 ? "+" : "")\(String(format: "%.2f", profitLossPercent))%)"
                     Text(profitLossString)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(lotProfitLoss >= 0 ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                        .foregroundColor(lotProfitLoss >= 0 ? AppColors.positive : Color.red)
                 }
             }
             
@@ -424,7 +375,7 @@ struct LotRow: View {
                         .padding(.vertical, 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(red: 0.231, green: 0.706, blue: 0.494), lineWidth: 1)
+                                .stroke(AppColors.positive, lineWidth: 1)
                         )
                 }
                 
@@ -475,11 +426,11 @@ struct PeriodReturnRow: View {
                     Text(value, format: .currency(code: "USD"))
                 }
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(value >= 0 ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                .foregroundColor(value >= 0 ? AppColors.positive : Color.red)
                 
                 Text("(\(percent >= 0 ? "+" : "")\(String(format: "%.2f", percent))%)")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(percent >= 0 ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                    .foregroundColor(percent >= 0 ? AppColors.positive : Color.red)
             }
         }
     }
@@ -601,7 +552,7 @@ struct AddLotFormView: View {
                         .padding(.vertical, 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(red: 0.231, green: 0.706, blue: 0.494), lineWidth: 1)
+                                .stroke(AppColors.positive, lineWidth: 1)
                         )
                 }
                 .padding(.top, 4)
@@ -620,10 +571,15 @@ struct AddLotFormView: View {
     }
     
     private func attemptCommit() {
-        guard let price = Double(priceInput), let shares = Double(sharesInput), shares > 0, !accountNameInput.isEmpty else {
+        guard let priceValue = Double(priceInput), priceValue > 0,
+              let sharesValue = Double(sharesInput), sharesValue > 0,
+              !accountNameInput.isEmpty else {
             commitError = "Please enter valid numbers and an account name."
             return
         }
+        
+        let price = priceValue
+        let shares = sharesValue
         
         let accountName = accountNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
         
@@ -914,7 +870,7 @@ struct AddSharesToLotFormView: View {
                         .padding(.vertical, 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(red: 0.231, green: 0.706, blue: 0.494), lineWidth: 1)
+                                .stroke(AppColors.positive, lineWidth: 1)
                         )
                 }
                 .padding(.top, 4)

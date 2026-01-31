@@ -6,56 +6,7 @@ struct PortfolioVisualizationsView: View {
     @AppStorage("selectedTab") private var selectedTab: Int = 1
     @State private var showDollarAmounts: Bool = false
     @Environment(\.dismiss) var dismiss
-    
-    // Helper function to generate consistent colors for ticker symbols
-    private func colorForTicker(_ ticker: String) -> Color {
-        var hash = 0
-        for char in ticker.uppercased() {
-            hash = Int(char.asciiValue ?? 0) + ((hash << 5) - hash)
-        }
-        
-        // Ensure hash is positive
-        hash = abs(hash)
-        
-        // Use modulo to get better distribution for RGB components
-        // This ensures we get a good range of colors
-        let r = Double((hash & 0xFF0000) >> 16) / 255.0
-        let g = Double((hash & 0x00FF00) >> 8) / 255.0
-        let b = Double(hash & 0x0000FF) / 255.0
-        
-        // Use HSL-like approach for better color vibrancy
-        // Calculate brightness and adjust to ensure visibility
-        let brightness = (r * 0.299 + g * 0.587 + b * 0.114)
-        let minBrightness: Double = 0.4
-        let maxBrightness: Double = 0.85
-        
-        // Adjust brightness while maintaining color relationships
-        var adjustedR = r
-        var adjustedG = g
-        var adjustedB = b
-        
-        if brightness < minBrightness {
-            // Too dark - brighten proportionally
-            let scale = minBrightness / brightness
-            adjustedR = min(r * scale, 1.0)
-            adjustedG = min(g * scale, 1.0)
-            adjustedB = min(b * scale, 1.0)
-        } else if brightness > maxBrightness {
-            // Too light - darken proportionally
-            let scale = maxBrightness / brightness
-            adjustedR = r * scale
-            adjustedG = g * scale
-            adjustedB = b * scale
-        }
-        
-        // Ensure minimum values for visibility
-        adjustedR = max(adjustedR, 0.2)
-        adjustedG = max(adjustedG, 0.2)
-        adjustedB = max(adjustedB, 0.2)
-        
-        return Color(red: adjustedR, green: adjustedG, blue: adjustedB)
-    }
-    
+
     // Calculate portfolio data for visualizations
     private var portfolioData: [(ticker: String, value: Double, percentage: Double, color: Color)] {
         let stocks = viewModel.stocks.filter { $0.isMaritalStatus }

@@ -91,7 +91,7 @@ struct StockPositionRow: View {
                             .font(.system(size: 10, weight: .regular))
                             .foregroundColor(Color.secondary)
                     }
-                    .foregroundColor(dailyReturn.value >= 0 ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                    .foregroundColor(AppColors.forValue(dailyReturn.value))
                 }
             }
             
@@ -130,7 +130,7 @@ struct StockPositionRow: View {
                             .font(.system(size: 10, weight: .regular))
                             .foregroundColor(Color.secondary)
                     }
-                    .foregroundColor(allTimeReturn.value >= 0 ? Color(red: 0.231, green: 0.706, blue: 0.494) : Color.red)
+                    .foregroundColor(AppColors.forValue(allTimeReturn.value))
                 } else {
                     Text("Loading...")
                         .font(.system(size: 14, weight: .regular))

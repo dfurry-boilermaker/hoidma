@@ -93,10 +93,19 @@ struct PhoneAuthView: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 56)
-            .background(phoneNumber.isEmpty ? Color.gray : Color(red: 0.231, green: 0.706, blue: 0.494))
+            .background(phoneNumber.isEmpty ? Color.gray : AppColors.positive)
             .foregroundColor(.white)
             .cornerRadius(12)
             .disabled(phoneNumber.isEmpty || authManager.isLoading)
+            
+            // Show warning if testing on simulator
+            #if targetEnvironment(simulator)
+            Text("⚠️ Phone Auth requires a real device. APNs doesn't work on simulator.")
+                .font(.system(size: 12))
+                .foregroundColor(.orange)
+                .multilineTextAlignment(.center)
+                .padding(.top, 8)
+            #endif
         }
     }
     
@@ -141,7 +150,7 @@ struct PhoneAuthView: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 56)
-            .background(verificationCode.isEmpty ? Color.gray : Color(red: 0.231, green: 0.706, blue: 0.494))
+            .background(verificationCode.isEmpty ? Color.gray : AppColors.positive)
             .foregroundColor(.white)
             .cornerRadius(12)
             .disabled(verificationCode.isEmpty || authManager.isLoading)
@@ -239,7 +248,7 @@ struct PhoneAuthView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
-                        .background(verificationCode.isEmpty ? Color.gray : Color(red: 0.231, green: 0.706, blue: 0.494))
+                        .background(verificationCode.isEmpty ? Color.gray : AppColors.positive)
                         .foregroundColor(.white)
                         .cornerRadius(12)
                         .disabled(verificationCode.isEmpty)

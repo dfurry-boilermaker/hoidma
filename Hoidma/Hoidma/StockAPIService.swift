@@ -26,10 +26,7 @@ import SwiftUI
 /// - Polygon.io (free tier available)
 class StockAPIService {
     static let shared = StockAPIService()
-    
-    // Polygon.io API Key 
-    private let polygonAPIKey = "Ds3t3cHooEShvcG3nqYXmBTDBrLauU68" 
-    
+
     private init() {}
     
     /// Structure to hold stock data from API
@@ -78,9 +75,24 @@ class StockAPIService {
     /// - Returns: StockData with price and company name, or nil if fetch fails
     /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchStockData(for ticker: String) async -> StockData? {
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTicker.isEmpty else { return nil }
+        // CRITICAL: Check BEFORE creating continuation to prevent SwiftYFinance from initializing
+        // This prevents crashes during UI testing
+        guard !AppEnvironment.isUITesting else {
+            AppEnvironment.testingLog(" Skipping API call for \(ticker), returning mock data")
+            return StockData(
+                price: 150.0, // Mock price
+                companyName: ticker.uppercased(),
+                periodChanges: nil,
+                previousClose: 150.0,
+                logoURL: nil
+            )
+        }
+        
         return await withCheckedContinuation { continuation in
             // Fetch recent data using SwiftYFinance
-            SwiftYFinance.recentDataBy(identifier: ticker.uppercased()) { data, error in
+            SwiftYFinance.recentDataBy(identifier: trimmedTicker.uppercased()) { data, error in
                 if let error = error {
                     print("❌ Error fetching recent data for \(ticker): \(error.localizedDescription)")
                     continuation.resume(returning: nil)
@@ -93,13 +105,13 @@ class StockAPIService {
                     return
                 }
                 
-                // Extract price and previous close
-                let price = stock.regularMarketPrice ?? 0
-                let previousClose = stock.previousClose
+                // Extract price and previous close (SwiftYFinance may return Float, convert to Double)
+                let price = Double(stock.regularMarketPrice ?? 0.0)
+                let previousClose: Double? = stock.previousClose.map { Double($0) }
                 
                 // Get company name from summary data
-                SwiftYFinance.summaryDataBy(identifier: ticker.uppercased(), selection: [.price, .summaryProfile]) { summaryData, summaryError in
-                    var companyName = ticker.uppercased()
+                SwiftYFinance.summaryDataBy(identifier: trimmedTicker.uppercased(), selection: [.price, .summaryProfile]) { summaryData, summaryError in
+                    var companyName = trimmedTicker.uppercased()
                     
                     if let summary = summaryData {
                         // Try price module first for company name
@@ -171,6 +183,11 @@ class StockAPIService {
         await withTaskGroup(of: (String, Double?).self) { group in
             for (periodKey, startDate) in periods {
                 group.addTask {
+                    // Skip API calls in UI tests
+                    if AppEnvironment.isUITesting {
+                        return (periodKey, 150.0) // Mock price
+                    }
+                    
                     return await withCheckedContinuation { continuation in
                         // Use SwiftYFinance to fetch chart data
                         SwiftYFinance.chartDataBy(
@@ -188,14 +205,16 @@ class StockAPIService {
                             // Get the first (oldest) price from the chart data
                             if let chart = chartData,
                                let first = chart.first,
-                               let startPrice = first.close,
-                               startPrice > 0 {
-                                // Calculate percentage change
-                                let change = ((currentPrice - startPrice) / startPrice) * 100
-                                continuation.resume(returning: (periodKey, change))
-                            } else {
-                                continuation.resume(returning: (periodKey, nil))
+                               let closePrice = first.close {
+                                let startPrice = Double(closePrice)
+                                if startPrice > 0 {
+                                    // Calculate percentage change
+                                    let change = ((currentPrice - startPrice) / startPrice) * 100
+                                    continuation.resume(returning: (periodKey, change))
+                                    return
+                                }
                             }
+                            continuation.resume(returning: (periodKey, nil))
                         }
                     }
                 }
@@ -259,9 +278,11 @@ class StockAPIService {
         // Fetch data concurrently
         await withTaskGroup(of: (String, StockData?).self) { group in
             for ticker in tickers {
+                let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedTicker.isEmpty { continue }
                 group.addTask {
-                    let data = await self.fetchStockData(for: ticker)
-                    return (ticker, data)
+                    let data = await self.fetchStockData(for: trimmedTicker)
+                    return (trimmedTicker, data)
                 }
             }
             
@@ -282,6 +303,12 @@ class StockAPIService {
     /// - Returns: Price as Double (closing price from the start of the period), or nil if fetch fails
     /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchHistoricalPrice(for ticker: String, period: String) async -> Double? {
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTicker.isEmpty else { return nil }
+        // Skip API calls during UI testing
+        if AppEnvironment.isUITesting {
+            return 150.0 // Mock historical price
+        }
         let calendar = Calendar.current
         let now = Date()
         let startDate: Date
@@ -300,9 +327,14 @@ class StockAPIService {
             startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
         }
         
+        // Skip API calls in UI tests
+        guard !AppEnvironment.isUITesting else {
+            return 150.0 // Mock price
+        }
+        
         return await withCheckedContinuation { continuation in
             SwiftYFinance.chartDataBy(
-                identifier: ticker.uppercased(),
+                identifier: trimmedTicker.uppercased(),
                 start: startDate,
                 end: now,
                 interval: .oneday
@@ -313,14 +345,15 @@ class StockAPIService {
                     return
                 }
                 
-                // Get the first (oldest) price from the chart data
+                // Get the first (oldest) price from the chart data (convert Float to Double)
                 if let chart = chartData,
                    let first = chart.first,
-                   let price = first.close {
+                   let closePrice = first.close {
+                    let price = Double(closePrice)
                     continuation.resume(returning: price)
-                } else {
-                    continuation.resume(returning: nil)
+                    return
                 }
+                continuation.resume(returning: nil)
             }
         }
     }
@@ -330,6 +363,12 @@ class StockAPIService {
     /// - Returns: Dictionary mapping period to price, or nil if fetch fails
     /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchHistoricalPrices(for ticker: String) async -> [String: Double]? {
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTicker.isEmpty else { return nil }
+        // Skip API calls during UI testing
+        if AppEnvironment.isUITesting {
+            return ["1d": 150.0, "1w": 148.0, "1m": 145.0, "3m": 140.0, "ytd": 135.0] // Mock historical prices
+        }
         var historicalPrices: [String: Double] = [:]
         let calendar = Calendar.current
         let now = Date()
@@ -380,9 +419,16 @@ class StockAPIService {
     
     /// Helper function to fetch historical price for a date range using SwiftYFinance
     private func fetchHistoricalPriceForDateRange(ticker: String, start: Date, end: Date, periodKey: String) async -> (String, Double?) {
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTicker.isEmpty else { return (periodKey, nil) }
+        // Skip API calls in UI tests
+        if AppEnvironment.isUITesting {
+            return (periodKey, 150.0) // Mock price
+        }
+        
         return await withCheckedContinuation { continuation in
             SwiftYFinance.chartDataBy(
-                identifier: ticker.uppercased(),
+                identifier: trimmedTicker.uppercased(),
                 start: start,
                 end: end,
                 interval: .oneday
@@ -395,11 +441,12 @@ class StockAPIService {
                 
                 if let chart = chartData,
                    let first = chart.first,
-                   let price = first.close {
+                   let closePrice = first.close {
+                    let price = Double(closePrice)
                     continuation.resume(returning: (periodKey, price))
-                } else {
-                    continuation.resume(returning: (periodKey, nil))
+                    return
                 }
+                continuation.resume(returning: (periodKey, nil))
             }
         }
     }
@@ -408,8 +455,15 @@ class StockAPIService {
     /// - Parameter ticker: Stock ticker symbol
     /// - Returns: Logo URL as String, or nil if fetch fails
     func fetchCompanyLogo(for ticker: String) async -> String? {
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTicker.isEmpty else { return nil }
+        // Skip API calls in UI tests
+        if AppEnvironment.isUITesting {
+            return nil // No logo in test mode
+        }
+        
         // Try Financial Modeling Prep API (legacy)
-        if let logo = await fetchLogoFromFMP(for: ticker) {
+        if let logo = await fetchLogoFromFMP(for: trimmedTicker) {
             print("✅ Using FMP logo for \(ticker): \(logo)")
             return logo
         }
@@ -447,7 +501,7 @@ class StockAPIService {
     
     /// Fetches logo from Financial Modeling Prep (legacy endpoint - may not work for new users)
     private func fetchLogoFromFMP(for ticker: String) async -> String? {
-        let urlString = "https://financialmodelingprep.com/api/v3/profile/\(ticker.uppercased())?apikey=Qadn9INnY2R9FEuFi5PwYRm7cwPp7Zwt"
+        let urlString = APIConfig.Endpoints.fmpProfile(ticker: ticker)
         
         guard let url = URL(string: urlString) else {
             return nil
@@ -507,12 +561,12 @@ class StockAPIService {
     /// - Note: Free tier limit: 5 API calls per minute
     func fetchCompanyInfo(fromPolygon ticker: String) async -> CompanyInfo? {
         // Check if API key is set
-        guard polygonAPIKey != "YOUR_POLYGON_API_KEY_HERE" else {
+        guard APIConfig.polygonAPIKey != "YOUR_POLYGON_API_KEY_HERE" else {
             print("⚠️ Polygon.io API key not configured. Get your free API key from https://polygon.io/")
             return nil
         }
         
-        let urlString = "https://api.polygon.io/v3/reference/tickers/\(ticker.uppercased())?apiKey=\(polygonAPIKey)"
+        let urlString = "https://api.polygon.io/v3/reference/tickers/\(ticker.uppercased())?apiKey=\(APIConfig.polygonAPIKey)"
         
         guard let url = URL(string: urlString) else {
             print("❌ Invalid URL for Polygon.io ticker: \(ticker)")

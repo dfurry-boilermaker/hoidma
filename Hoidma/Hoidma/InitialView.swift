@@ -26,7 +26,7 @@ struct InitialView: View {
                     .foregroundColor(.black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
-                    .background(Color(red: 0.231, green: 0.706, blue: 0.494))
+                    .background(AppColors.positive)
                     .cornerRadius(12)
             }
             .padding(.horizontal, 20)
