@@ -4,7 +4,17 @@
       "id" : "D16C85BE-0881-4ADF-978D-42267213430A",
       "name" : "Configuration 1",
       "options" : {
-
+        "commandLineArgumentEntries" : [
+          {
+            "argument" : "--ui-testing"
+          }
+        ],
+        "environmentVariableEntries" : [
+          {
+            "key" : "UI_TESTING",
+            "value" : "1"
+          }
+        ]
       }
     }
   ],
@@ -12,7 +22,13 @@
     "testTimeoutsEnabled" : true
   },
   "testTargets" : [
-
+    {
+      "target" : {
+        "containerPath" : "container:Hoidma.xcodeproj",
+        "identifier" : "F4AEC9012EBEC27D00CC4321",
+        "name" : "HoidmaUITests"
+      }
+    }
   ],
   "version" : 1
 }

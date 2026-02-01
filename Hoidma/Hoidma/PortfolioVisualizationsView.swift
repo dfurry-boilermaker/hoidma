@@ -2,10 +2,10 @@ import SwiftUI
 
 struct PortfolioVisualizationsView: View {
     @ObservedObject var viewModel: StockViewModel
+    @Binding var selectedTab: Int
+    @Binding var selectedAccountName: String?
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
-    @AppStorage("selectedTab") private var selectedTab: Int = 1
     @State private var showDollarAmounts: Bool = false
-    @Environment(\.dismiss) var dismiss
 
     // Calculate portfolio data for visualizations
     private var portfolioData: [(ticker: String, value: Double, percentage: Double, color: Color)] {
@@ -51,7 +51,29 @@ struct PortfolioVisualizationsView: View {
         
         return allData.sorted { $0.totalValue > $1.totalValue }
     }
-    
+
+    // Calculate data for the performance heatmap
+    private var heatmapData: [(ticker: String, value: Double, changePercent: Double)] {
+        let stocks = viewModel.stocks.filter { $0.isMaritalStatus }
+        var data: [(ticker: String, value: Double, changePercent: Double)] = []
+
+        for stock in stocks {
+            if let priceData = viewModel.stockPrices[stock.ticker] {
+                let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
+                let stockValue = priceData.currentPrice * totalShares
+
+                // Get daily change percent from API data
+                let dailyChange = priceData.apiPeriodChanges["1d"] ?? priceData.changePercent
+
+                if stockValue > 0 {
+                    data.append((stock.ticker, stockValue, dailyChange))
+                }
+            }
+        }
+
+        return data.sorted { $0.value > $1.value }
+    }
+
     var body: some View {
         ZStack {
             Color(UIColor.systemBackground)
@@ -60,36 +82,43 @@ struct PortfolioVisualizationsView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Portfolio Diversity header - appears as if pulled up from bottom
-                        VStack(spacing: 12) {
-                            
-                            ZStack {
+                        // Header - standardized across all pages
+                        ZStack {
+                            // Hoidma logo on the left
+                            HStack {
+                                Image(isDarkMode ? "hoidma.dark" : "hoidma")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 100, height: 50)
+                                    .cornerRadius(8)
+                                Spacer()
+                            }
+
+                            // Dave folly logo in center (dark mode toggle)
+                            Button {
+                                withAnimation {
+                                    isDarkMode.toggle()
+                                }
+                            } label: {
+                                Image(isDarkMode ? "dave.folly.logo.dark" : "dave.folly.logo")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(height: 50)
+                            }
+
+                            // Dollar/percentage toggle on the right
+                            if viewModel.totalPortfolioValue > 0 {
                                 HStack {
                                     Spacer()
-                                    
-                                    Image(isDarkMode ? "hoidma.dark" : "hoidma")
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(height: 40)
-                                    
-                                    Spacer()
-                                }
-                                
-                                // Toggle button for dollar/percentage view - only show when there are positions
-                                if viewModel.totalPortfolioValue > 0 {
-                                    HStack {
-                                        Spacer()
-                                        
-                                        Button {
-                                            withAnimation {
-                                                showDollarAmounts.toggle()
-                                            }
-                                        } label: {
-                                            Image(isDarkMode ? (showDollarAmounts ? "dollar.dark" : "percentage.dark") : (showDollarAmounts ? "dollar" : "percentage"))
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fit)
-                                                .frame(width: 24, height: 24)
+                                    Button {
+                                        withAnimation {
+                                            showDollarAmounts.toggle()
                                         }
+                                    } label: {
+                                        Image(isDarkMode ? (showDollarAmounts ? "dollar.dark" : "percentage.dark") : (showDollarAmounts ? "dollar" : "percentage"))
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 24, height: 24)
                                     }
                                 }
                             }
@@ -163,15 +192,41 @@ struct PortfolioVisualizationsView: View {
                                             .foregroundColor(Color.primary)
                                         Spacer()
                                     }
-                                    
+
                                     SharedPositionsView(
                                         sharedData: allPositionsData,
-                                        showDollarAmounts: showDollarAmounts
+                                        showDollarAmounts: showDollarAmounts,
+                                        onAccountTap: { accountName in
+                                            // Set the selected account and navigate to accounts page
+                                            selectedAccountName = accountName
+                                            withAnimation(.easeInOut(duration: 0.3)) {
+                                                selectedTab = 3
+                                            }
+                                        }
                                     )
                                 }
-                                .padding(20)
                                 .padding(.horizontal, 20)
                                 .padding(.bottom, 20)
+                            }
+
+                            // Performance Heatmap Section
+                            if !heatmapData.isEmpty {
+                                VStack(spacing: 16) {
+                                    HStack {
+                                        Text("Performance Heatmap")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundColor(Color.primary)
+                                        Spacer()
+
+                                        Text("Daily")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(Color.secondary)
+                                    }
+
+                                    HeatmapTreemapView(data: heatmapData)
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 40)
                             }
                         } else {
                             // Empty state
@@ -190,22 +245,25 @@ struct PortfolioVisualizationsView: View {
                         }
                     }
                 }
-                
-                // Bottom navigation bar - outside ScrollView to stay fixed at bottom
-                BottomNavigationBar(selectedTab: $selectedTab) { tabNumber in
-                    // Navigation logic
-                    if tabNumber == 1 {
-                        // Navigate back to main page
-                        dismiss()
-                    } else if tabNumber == 2 {
-                        // Already on portfolio visualizations view
-                        // Do nothing
-                    }
-                }
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .navigationBarTitleDisplayMode(.inline)
+        .gesture(
+            DragGesture()
+                .onEnded { gesture in
+                    // Swipe right to go to main page (tab 1)
+                    if gesture.translation.width > 100 {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            selectedTab = 1
+                        }
+                    }
+                    // Swipe left to go to accounts page (tab 3)
+                    else if gesture.translation.width < -100 {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            selectedTab = 3
+                        }
+                    }
+                }
+        )
     }
 }
 
@@ -533,14 +591,15 @@ struct RadialBarSegment: View {
 struct SharedPositionsView: View {
     let sharedData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)]
     let showDollarAmounts: Bool
+    var onAccountTap: ((String) -> Void)? = nil
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
-    
+
     // Get all unique accounts
     private var allAccounts: [String] {
         let accountSet = Set(sharedData.flatMap { $0.accounts })
         return Array(accountSet).sorted()
     }
-    
+
     // Calculate total value per account
     private var accountValues: [String: Double] {
         var values: [String: Double] = [:]
@@ -551,14 +610,15 @@ struct SharedPositionsView: View {
         }
         return values
     }
-    
+
     var body: some View {
         if !allAccounts.isEmpty {
-            EulerDiagramView(
+            TreemapView(
                 accounts: allAccounts,
                 sharedData: sharedData,
                 accountValues: accountValues,
-                showDollarAmounts: showDollarAmounts
+                showDollarAmounts: showDollarAmounts,
+                onAccountTap: onAccountTap
             )
         } else {
             Text("No positions to display")

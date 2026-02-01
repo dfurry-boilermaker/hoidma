@@ -3,40 +3,44 @@ import Foundation
 // MARK: - Data Models
 
 /// Defines a single lot of stock in a specific account
-struct StockLot: Codable, Identifiable, Equatable {
+struct StockLot: Codable, Identifiable, Equatable, Hashable {
     let id: UUID
     let accountName: String
     var shares: Double // Changed to Double to support fractional shares
     var purchasePrice: Double // Changed to var to allow updating when adding shares
-    
+
     init(accountName: String, shares: Double, purchasePrice: Double) {
         self.id = UUID()
         self.accountName = accountName
         self.shares = shares
         self.purchasePrice = purchasePrice
     }
-    
+
     var totalCost: Double {
         return purchasePrice * shares
     }
-    
+
     static func == (lhs: StockLot, rhs: StockLot) -> Bool {
         return lhs.id == rhs.id &&
                lhs.accountName == rhs.accountName &&
                lhs.shares == rhs.shares &&
                lhs.purchasePrice == rhs.purchasePrice
     }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }
 
 /// Defines the data structure for a committed stock.
-struct Stock: Codable, Equatable {
+struct Stock: Codable, Equatable, Hashable {
     let ticker: String
     var companyName: String
     let purchasePrice: Double
     let shares: Int
     var isMaritalStatus: Bool = false
     var lots: [StockLot] = [] // Multiple lots in different accounts
-    
+
     static func == (lhs: Stock, rhs: Stock) -> Bool {
         return lhs.ticker == rhs.ticker &&
                lhs.companyName == rhs.companyName &&
@@ -44,6 +48,10 @@ struct Stock: Codable, Equatable {
                lhs.shares == rhs.shares &&
                lhs.isMaritalStatus == rhs.isMaritalStatus &&
                lhs.lots == rhs.lots
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ticker)
     }
     
     // Custom decoder to handle migration from old data without companyName
@@ -116,10 +124,7 @@ struct StockPriceData {
     
     // Previous trading day's close price (for accurate daily return calculation)
     var previousClose: Double?
-    
-    // Company logo URL
-    var logoURL: String?
-    
+
     var isGreen: Bool {
         return profitLoss >= 0
     }

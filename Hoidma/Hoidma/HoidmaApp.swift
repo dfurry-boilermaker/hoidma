@@ -1,33 +1,76 @@
 import SwiftUI
-import FirebaseCore
+import UserNotifications
 
 // This file is the entry point of your SwiftUI application.
-// When creating a new project in Xcode, this file is generated for you.
 
-class AppDelegate: NSObject, UIApplicationDelegate {
+class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        FirebaseApp.configure()
+        // Initialize Supabase client (triggers lazy initialization)
+        _ = SupabaseConfig.client
+        print("Supabase client initialized")
+        print("   URL: \(SupabaseConfig.projectURL)")
+
+        // Set up notification center delegate
+        UNUserNotificationCenter.current().delegate = self
+
         return true
+    }
+
+    // Handle notification received while app is in foreground
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.sound, .badge])
+    }
+
+    // Handle notification interaction
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        completionHandler()
     }
 }
 
 @main
 struct HoidmaApp: App {
-    // Register app delegate for Firebase setup
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var authManager = AuthManager()
-    
+    @Environment(\.scenePhase) private var scenePhase
+
+    // UI test detection
+    private var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments.contains("--ui-testing") ||
+        ProcessInfo.processInfo.environment["UI_TESTING"] == "1"
+    }
+
+    // Use Supabase AuthManager
+    @StateObject private var authManager = SupabaseAuthManager()
+
+    // Biometric authentication manager
+    @StateObject private var biometricAuth = BiometricAuthManager()
+
     var body: some Scene {
         WindowGroup {
-            if authManager.isAuthenticated {
-                // User is authenticated, show main app
-                ContentView()
-                    .environmentObject(authManager)
-            } else {
-                // User is not authenticated, show phone auth
-                PhoneAuthView()
-                    .environmentObject(authManager)
+            Group {
+                if isUITesting {
+                    ContentView()
+                } else if !authManager.isAuthenticated {
+                    // Not logged in - show email auth
+                    EmailAuthView()
+                } else {
+                    // Logged in - show main content
+                    ContentView()
+                }
+            }
+            .environmentObject(authManager)
+            .environmentObject(biometricAuth)
+            .task {
+                if isUITesting {
+                    authManager.isAuthenticated = true
+                    biometricAuth.isUnlocked = true
+                    print("UI TESTING MODE: Forcing authenticated state")
+                }
             }
         }
     }

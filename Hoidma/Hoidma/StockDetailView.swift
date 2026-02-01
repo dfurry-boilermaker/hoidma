@@ -12,7 +12,7 @@ struct StockDetailView: View {
     @State private var selectedLotForAdd: StockLot? = nil
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
     @AppStorage("selectedTab") private var selectedTab: Int = 1
-    
+
     // Get the current stock from view model to reflect updates - cached to avoid repeated lookups
     @State private var cachedStock: Stock?
 
@@ -110,41 +110,33 @@ struct StockDetailView: View {
                             let totalShares = currentStock.lots.isEmpty ? Double(currentStock.shares) : currentStock.lots.reduce(0.0) { $0 + $1.shares }
                             let stockValue = priceData.currentPrice * Double(totalShares)
                             let portfolioPercentage = (stockValue / viewModel.totalPortfolioValue) * 100
-                            
-                            GeometryReader { geometry in
-                                ZStack(alignment: .leading) {
-                                    // Background bar with neutral outline
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.clear)
-                                        .frame(height: 3)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                                        )
-                                    
-                                    // Filled bar - more prominent (using same color as visualization page)
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(colorForTicker(currentStock.ticker))
-                                        .frame(width: geometry.size.width * min(portfolioPercentage / 100, 1.0), height: 3)
-                                    
-                                    // Percentage text centered on the bar with background
-                                    HStack {
-                                        Spacer()
-                                        Text("\(String(format: "%.1f", portfolioPercentage))%")
-                                            .font(.system(size: 14, weight: .semibold))
-                                            .foregroundColor(Color.primary)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 4)
-                                                    .fill(Color(UIColor.systemBackground).opacity(0.9))
+
+                            VStack(spacing: 4) {
+                                // Percentage text centered above the bar
+                                Text("\(String(format: "%.1f", portfolioPercentage))% of portfolio")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(Color.primary)
+
+                                // Progress bar
+                                GeometryReader { geometry in
+                                    ZStack(alignment: .leading) {
+                                        // Background bar with neutral outline
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.clear)
+                                            .frame(height: 6)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                                             )
-                                        Spacer()
+
+                                        // Filled bar
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(colorForTicker(currentStock.ticker))
+                                            .frame(width: max(geometry.size.width * min(portfolioPercentage / 100, 1.0), 0), height: 6)
                                     }
-                                    .frame(height: 3)
                                 }
+                                .frame(height: 6)
                             }
-                            .frame(height: 3)
                             .padding(.vertical, 8)
                             .padding(.horizontal, 20)
                         }
@@ -224,20 +216,23 @@ struct StockDetailView: View {
                         }
                     }
                 }
-                
+
                 // Bottom navigation bar
                 BottomNavigationBar(selectedTab: $selectedTab) { tabNumber in
-                    // Navigation logic
-                    if tabNumber == 1 {
-                        // Navigate back to main page
-                        dismiss()
-                    } else if tabNumber == 2 {
-                        // Navigate to portfolio visualizations view
-                        navigationPath.append(NavigationDestination.portfolioVisualizations)
-                    }
+                    selectedTab = tabNumber
+                    dismiss()
                 }
             }
         }
+        .gesture(
+            DragGesture()
+                .onEnded { gesture in
+                    // Swipe right to go back (positive horizontal translation)
+                    if gesture.translation.width > 100 {
+                        dismiss()
+                    }
+                }
+        )
         .navigationBarBackButtonHidden(true)
         .onAppear {
             // Refresh cached stock
@@ -441,15 +436,26 @@ struct AddLotFormView: View {
     @ObservedObject var viewModel: StockViewModel
     @Binding var isPresented: Bool
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
-    
+
     @State private var accountNameInput: String = ""
     @State private var priceInput: String = ""
     @State private var sharesInput: String = ""
     @State private var commitError: String? = nil
     @FocusState private var focusedField: Field?
-    
+
     enum Field {
         case accountName, price, shares
+    }
+
+    /// Get existing account names from all stocks
+    private var existingAccountNames: [String] {
+        var accountSet = Set<String>()
+        for stock in viewModel.stocks {
+            for lot in stock.lots {
+                accountSet.insert(lot.accountName)
+            }
+        }
+        return accountSet.sorted()
     }
     
     var body: some View {
@@ -483,7 +489,7 @@ struct AddLotFormView: View {
                     Text("Account Name")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color.secondary)
-                    
+
                     TextField("Indv, 401k, Roth IRA, etc.", text: $accountNameInput)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color.primary)
@@ -495,6 +501,30 @@ struct AddLotFormView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                         )
+
+                    // Existing account name suggestions
+                    if !existingAccountNames.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(existingAccountNames, id: \.self) { accountName in
+                                    Button {
+                                        accountNameInput = accountName
+                                    } label: {
+                                        Text(accountName)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(accountNameInput == accountName ? .white : Color.primary)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 16)
+                                                    .fill(accountNameInput == accountName ? Color.blue : Color.gray.opacity(0.15))
+                                            )
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {

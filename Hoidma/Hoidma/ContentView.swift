@@ -1,186 +1,269 @@
 import SwiftUI
 import UIKit
 import Combine
-import FirebaseAuth
 
 enum NavigationDestination: Hashable {
-    case portfolioVisualizations
+    case stockDetail(Stock)
 }
 
 struct ContentView: View {
-    // FOR TESTING: Uses local storage instead of Firebase
-    // StockViewModel is configured to use local storage (useLocalStorage = true)
     @StateObject private var viewModel = StockViewModel()
-    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var authManager: SupabaseAuthManager
+    @EnvironmentObject var biometricAuth: BiometricAuthManager
     @State private var showingCommitForm = false
     @State private var showingModal = false
     @State private var selectedTicker: String? = nil
     @State private var navigationPath = NavigationPath()
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
     @AppStorage("selectedTab") private var selectedTab: Int = 1
+    @State private var previousTab: Int = 1
+    @State private var slideDirection: SlideDirection = .none
     @State private var showScrollButton: Bool = false
     @State private var initialScrollOffset: CGFloat? = nil
     @State private var showSignOutAlert = false
-    private let scrollThreshold: CGFloat = 50 // Show button after scrolling 50 points (reduced for easier testing)
-    
+    @State private var selectedAccountName: String? = nil
+    private let scrollThreshold: CGFloat = 50
+
+    enum SlideDirection {
+        case none, left, right
+    }
+
     var body: some View {
         NavigationStack(path: $navigationPath) {
-        ZStack {
-            // Adaptive background
-            Color(UIColor.systemBackground)
-                .ignoresSafeArea()
-            
-            VStack(spacing: 0) {
-                ScrollView {
+            ZStack {
+                Color(UIColor.systemBackground)
+                    .ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    // Tab content with slide transitions
+                    ZStack {
+                        if selectedTab == 1 {
+                            PortfolioTabContent(
+                                viewModel: viewModel,
+                                showingModal: $showingModal,
+                                showingCommitForm: $showingCommitForm,
+                                selectedTicker: $selectedTicker,
+                                navigationPath: $navigationPath,
+                                selectedTab: $selectedTab,
+                                showScrollButton: $showScrollButton,
+                                initialScrollOffset: $initialScrollOffset,
+                                scrollThreshold: scrollThreshold
+                            )
+                            .transition(slideTransition)
+                        }
+
+                        if selectedTab == 2 {
+                            PortfolioVisualizationsView(viewModel: viewModel, selectedTab: $selectedTab, selectedAccountName: $selectedAccountName)
+                                .transition(slideTransition)
+                        }
+
+                        if selectedTab == 3 {
+                            AccountsView(viewModel: viewModel, selectedTab: $selectedTab, navigationPath: $navigationPath, selectedAccountName: $selectedAccountName)
+                                .transition(slideTransition)
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: selectedTab)
+
+                    // Bottom navigation bar
+                    BottomNavigationBar(selectedTab: $selectedTab) { tabNumber in
+                        if tabNumber != selectedTab {
+                            previousTab = selectedTab
+                            slideDirection = tabNumber > selectedTab ? .left : .right
+                            selectedTab = tabNumber
+                        }
+                    }
+                }
+
+                // Fixed header (only show on tab 1)
+                if selectedTab == 1 {
                     VStack(spacing: 0) {
-                        // GeometryReader to track scroll position for button visibility
-                        GeometryReader { geometry in
-                            Color.clear
-                                .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
-                        }
-                        .frame(height: 0)
-                        
-                        // Spacer to account for sticky header height
-                        Spacer()
-                            .frame(height: 78) // Reduced height to move content up
-                        
-                        PortfolioView(viewModel: viewModel, showingModal: $showingModal, showingCommitForm: $showingCommitForm, selectedTicker: $selectedTicker, navigationPath: $navigationPath)
-                    }
-                    .padding(.bottom, 50)
-                }
-                .coordinateSpace(name: "scroll")
-                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                    let offset = value
-                    
-                    // Track initial offset (when at top of scroll)
-                    if initialScrollOffset == nil {
-                        initialScrollOffset = offset
-                    }
-                    
-                    // Calculate how far we've scrolled from the initial position
-                    if let initial = initialScrollOffset {
-                        let scrollAmount = initial - offset // Positive when scrolled down
-                        
-                        // Show button when scrolled past threshold (scrolled down enough)
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showScrollButton = scrollAmount > scrollThreshold
-                        }
-                    }
-                }
-                .sheet(isPresented: $showingCommitForm) {
-                    AddStockFormView(viewModel: viewModel, isPresented: $showingCommitForm)
-                        .presentationDetents([.large])
-                        .presentationDragIndicator(.visible)
-                }
-                // Bottom navigation bar
-                BottomNavigationBar(selectedTab: $selectedTab) { tabNumber in
-                    // Navigation logic
-                    if tabNumber == 1 {
-                        // Navigate to main page (pop to root)
-                        navigationPath.removeLast(navigationPath.count)
-                    } else if tabNumber == 2 {
-                        // Navigate to portfolio visualizations view
-                        navigationPath.append(NavigationDestination.portfolioVisualizations)
-                    }
-                    // Tabs 3 and 4 - functionality to be added later
-                }
-            }
-            
-            // Fixed header with both logos (hides/shows based on scroll direction)
-            VStack(spacing: 0) {
-                ZStack(alignment: .top) {
-                    // Background to prevent content showing through - extends to top (renders first, behind everything)
-                    Color(UIColor.systemBackground)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 120) 
-                        .ignoresSafeArea(edges: .top)
-                    
-                    // Hoidma logo at top-left with sign-out on long press
-                    HStack {
-                        Image(isDarkMode ? "hoidma.dark" : "hoidma")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 100, height: 50)
-                            .cornerRadius(8)
-                            .padding(.leading, 16)
-                            .onLongPressGesture {
-                                showSignOutAlert = true
+                        ZStack(alignment: .top) {
+                            Color(UIColor.systemBackground)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 120)
+                                .ignoresSafeArea(edges: .top)
+
+                            HStack {
+                                Image(isDarkMode ? "hoidma.dark" : "hoidma")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 100, height: 50)
+                                    .cornerRadius(8)
+                                    .padding(.leading, 16)
+                                    .onLongPressGesture {
+                                        showSignOutAlert = true
+                                    }
+
+                                Spacer()
                             }
-                        
+
+                            Button {
+                                withAnimation {
+                                    isDarkMode.toggle()
+                                }
+                            } label: {
+                                Image(isDarkMode ? "dave.folly.logo.dark" : "dave.folly.logo")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(height: 50)
+                            }
+                        }
+
                         Spacer()
                     }
-                    
-                    // Dave.folly logo centered - tap to toggle dark mode
-                    Button {
-                        withAnimation {
-                            isDarkMode.toggle()
+
+                    // Add button at top-right
+                    VStack {
+                        HStack {
+                            Spacer()
+
+                            let hasStocks = viewModel.stocks.filter { $0.isMaritalStatus }.contains { stock in
+                                let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
+                                return totalShares > 0
+                            }
+
+                            if showScrollButton && hasStocks {
+                                Button {
+                                    showingCommitForm = true
+                                } label: {
+                                    Image(isDarkMode ? "add.button.dark" : "add.button")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 55, height: 34)
+                                }
+                                .padding(.trailing, 16)
+                                .padding(.top, 12)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                         }
-                    } label: {
-                        Image(isDarkMode ? "dave.folly.logo.dark" : "dave.folly.logo")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(height: 50)
+
+                        Spacer()
                     }
-                    
                 }
 
-                Spacer()
-            }
-            
-            // Add button at top-right - appears after scrolling threshold (fixed position)
-            VStack {
-                HStack {
-                    Spacer()
-                    
-                    let hasStocks = viewModel.stocks.filter { $0.isMaritalStatus }.contains { stock in
-                        let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
-                        return totalShares > 0
-                    }
-                    
-                    if showScrollButton && hasStocks {
-                        Button {
-                            showingCommitForm = true
-                        } label: {
-                            Image(isDarkMode ? "add.button.dark" : "add.button")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 55, height: 34)
-                        }
-                        .padding(.trailing, 16)
-                        .padding(.top, 12)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
+                // Remove Stock Modal
+                if showingModal, let ticker = selectedTicker {
+                    RemoveStockModal(viewModel: viewModel, showingModal: $showingModal, ticker: ticker)
                 }
-                
-                Spacer()
             }
-
-            // Remove Stock Modal
-            if showingModal, let ticker = selectedTicker {
-                RemoveStockModal(viewModel: viewModel, showingModal: $showingModal, ticker: ticker)
-            }
-        }
             .navigationBarHidden(true)
             .preferredColorScheme(isDarkMode ? .dark : .light)
             .navigationDestination(for: NavigationDestination.self) { destination in
                 switch destination {
-                case .portfolioVisualizations:
-                    PortfolioVisualizationsView(viewModel: viewModel)
+                case .stockDetail(let stock):
+                    StockDetailView(
+                        stock: stock,
+                        priceData: viewModel.stockPrices[stock.ticker],
+                        viewModel: viewModel,
+                        navigationPath: $navigationPath
+                    )
                 }
             }
-            .alert("Sign Out", isPresented: $showSignOutAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Sign Out", role: .destructive) {
-                    do {
-                        try authManager.signOut()
-                    } catch {
-                        print("Error signing out: \(error.localizedDescription)")
+            .sheet(isPresented: $showingCommitForm) {
+                AddStockFormView(viewModel: viewModel, isPresented: $showingCommitForm)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
+            .confirmationDialog("Settings", isPresented: $showSignOutAlert, titleVisibility: .visible) {
+                if biometricAuth.canUseBiometrics {
+                    Button(biometricAuth.biometricAuthEnabled ? "Disable \(biometricAuth.biometricTypeName)" : "Enable \(biometricAuth.biometricTypeName)") {
+                        biometricAuth.biometricAuthEnabled.toggle()
                     }
                 }
+                Button("Sign Out", role: .destructive) {
+                    Task {
+                        do {
+                            try await authManager.signOut()
+                        } catch {
+                            print("Error signing out: \(error.localizedDescription)")
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) { }
             } message: {
-                Text("Are you sure you want to sign out? Your portfolio data will remain saved.")
+                if biometricAuth.canUseBiometrics {
+                    Text("\(biometricAuth.biometricTypeName) is \(biometricAuth.biometricAuthEnabled ? "enabled" : "disabled")")
+                }
             }
         }
+    }
+
+    private var slideTransition: AnyTransition {
+        switch slideDirection {
+        case .left:
+            return .asymmetric(
+                insertion: .move(edge: .trailing),
+                removal: .move(edge: .leading)
+            )
+        case .right:
+            return .asymmetric(
+                insertion: .move(edge: .leading),
+                removal: .move(edge: .trailing)
+            )
+        case .none:
+            return .opacity
+        }
+    }
+}
+
+// MARK: - Portfolio Tab Content
+private struct PortfolioTabContent: View {
+    @ObservedObject var viewModel: StockViewModel
+    @Binding var showingModal: Bool
+    @Binding var showingCommitForm: Bool
+    @Binding var selectedTicker: String?
+    @Binding var navigationPath: NavigationPath
+    @Binding var selectedTab: Int
+    @Binding var showScrollButton: Bool
+    @Binding var initialScrollOffset: CGFloat?
+    let scrollThreshold: CGFloat
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                GeometryReader { geometry in
+                    Color.clear
+                        .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
+                }
+                .frame(height: 0)
+
+                Spacer()
+                    .frame(height: 78)
+
+                PortfolioView(
+                    viewModel: viewModel,
+                    showingModal: $showingModal,
+                    showingCommitForm: $showingCommitForm,
+                    selectedTicker: $selectedTicker,
+                    navigationPath: $navigationPath
+                )
+            }
+            .padding(.bottom, 50)
+        }
+        .coordinateSpace(name: "scroll")
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+            if initialScrollOffset == nil {
+                initialScrollOffset = value
+            }
+
+            if let initial = initialScrollOffset {
+                let scrollAmount = initial - value
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showScrollButton = scrollAmount > scrollThreshold
+                }
+            }
+        }
+        .simultaneousGesture(
+            DragGesture()
+                .onEnded { gesture in
+                    // Swipe left to go to visualizations page (tab 2)
+                    if gesture.translation.width < -100 && abs(gesture.translation.height) < 50 {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            selectedTab = 2
+                        }
+                    }
+                }
+        )
     }
 }
 
@@ -345,23 +428,19 @@ class MockStockViewModel: StockViewModel {
                     "3m": Double.random(in: -20...20),
                     "ytd": Double.random(in: -25...25)
                 ],
-                previousClose: currentPrice * 0.99,
-                logoURL: nil
+                previousClose: currentPrice * 0.99
             )
         }
     }
 }
 
-/// Mock AuthManager for previews
-class MockAuthManager: ObservableObject {
-    @Published var isAuthenticated = true
-    @Published var currentUser: User? = nil
-    @Published var phoneNumber: String? = "+15742166565"
-    @Published var isLoading = false
-    @Published var errorMessage: String? = nil
-    
-    init() {
-        // Mock authenticated state
+/// Mock AuthManager for previews (extends SupabaseAuthManager)
+class MockAuthManager: SupabaseAuthManager {
+    override init() {
+        super.init()
+        // Set mock authenticated state
+        self.isAuthenticated = true
+        self.email = "test@example.com"
     }
 }
 
@@ -373,11 +452,12 @@ class MockAuthManager: ObservableObject {
 struct PreviewContent: View {
     @StateObject private var mockViewModel = MockStockViewModel()
     @StateObject private var mockAuthManager = MockAuthManager()
+    @StateObject private var mockBiometricAuth = BiometricAuthManager()
     @State private var showingModal = false
     @State private var showingCommitForm = false
     @State private var selectedTicker: String? = nil
     @State private var navigationPath = NavigationPath()
-    
+
     var body: some View {
         NavigationStack {
             PortfolioView(
@@ -389,6 +469,7 @@ struct PreviewContent: View {
             )
         }
         .environmentObject(mockAuthManager)
+        .environmentObject(mockBiometricAuth)
     }
 }
 
@@ -515,27 +596,29 @@ struct PortfolioViewPreviewContent: View {
                                             .fill(Color.gray.opacity(isDarkMode ? 0.3 : 0.15))
                                             .frame(height: 3)
                                     }
-                                    
+
                                     if viewModel.totalPortfolioValue > 0 {
                                         HStack(spacing: 0) {
-                                            ForEach(viewModel.stocks.filter { $0.isMaritalStatus }, id: \.ticker) { stock in
+                                            ForEach(sortedStocks, id: \.ticker) { stock in
                                                 if let priceData = viewModel.stockPrices[stock.ticker] {
                                                     let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
                                                     let stockValue = priceData.currentPrice * totalShares
-                                                    let portfolioPercentage = (stockValue / viewModel.totalPortfolioValue) * 100
-                                                    
+                                                    let portfolioPercentage = min((stockValue / viewModel.totalPortfolioValue), 1.0)
+
                                                     if portfolioPercentage > 0 {
                                                         RoundedRectangle(cornerRadius: 6)
                                                             .fill(colorForTicker(stock.ticker))
-                                                            .frame(width: geometry.size.width * (portfolioPercentage / 100), height: 3)
+                                                            .frame(width: max(geometry.size.width * portfolioPercentage, 0), height: 3)
                                                     }
                                                 }
                                             }
                                         }
+                                        .frame(maxWidth: geometry.size.width, alignment: .leading)
+                                        .clipped()
                                     }
                                 }
                             }
-                            .frame(height: 2)
+                            .frame(height: 3)
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 10)

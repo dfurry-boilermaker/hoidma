@@ -7,6 +7,8 @@ struct PortfolioView: View {
     @Binding var selectedTicker: String?
     @Binding var navigationPath: NavigationPath
     @State private var selectedPeriod: TimePeriod = .daily
+    @State private var stockToDelete: Stock? = nil
+    @State private var showDeleteConfirmation: Bool = false
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
     
     var periodReturn: (value: Double, percent: Double) {
@@ -134,28 +136,30 @@ struct PortfolioView: View {
                                             .fill(Color.gray.opacity(isDarkMode ? 0.3 : 0.15))
                                             .frame(height: 3)
                                     }
-                                    
+
                                     // Multi-segment progress bar (only show if there are positions)
                                     if viewModel.totalPortfolioValue > 0 {
                                         HStack(spacing: 0) {
-                                            ForEach(viewModel.stocks.filter { $0.isMaritalStatus }, id: \.ticker) { stock in
+                                            ForEach(sortedStocks, id: \.ticker) { stock in
                                                 if let priceData = viewModel.stockPrices[stock.ticker] {
                                                     let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
                                                     let stockValue = priceData.currentPrice * totalShares
-                                                    let portfolioPercentage = (stockValue / viewModel.totalPortfolioValue) * 100
-                                                    
+                                                    let portfolioPercentage = min((stockValue / viewModel.totalPortfolioValue), 1.0)
+
                                                     if portfolioPercentage > 0 {
                                                         RoundedRectangle(cornerRadius: 6)
                                                             .fill(colorForTicker(stock.ticker))
-                                                            .frame(width: geometry.size.width * (portfolioPercentage / 100), height: 3)
+                                                            .frame(width: max(geometry.size.width * portfolioPercentage, 0), height: 3)
                                                     }
                                                 }
                                             }
                                         }
+                                        .frame(maxWidth: geometry.size.width, alignment: .leading)
+                                        .clipped()
                                     }
                                 }
                             }
-                            .frame(height: 2)
+                            .frame(height: 3)
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 10)
@@ -202,9 +206,10 @@ struct PortfolioView: View {
                                         .frame(maxWidth: .infinity)
                                     }
                                     .buttonStyle(PlainButtonStyle())
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                         Button(role: .destructive) {
-                                            viewModel.removeStock(ticker: stock.ticker)
+                                            stockToDelete = stock
+                                            showDeleteConfirmation = true
                                         } label: {
                                             Label("Delete", systemImage: "trash")
                                         }
@@ -226,6 +231,21 @@ struct PortfolioView: View {
                         }
                     }
                 }
+            }
+        }
+        .alert("Delete Position", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                stockToDelete = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let stock = stockToDelete {
+                    viewModel.removeStock(ticker: stock.ticker)
+                }
+                stockToDelete = nil
+            }
+        } message: {
+            if let stock = stockToDelete {
+                Text("Are you sure you want to delete \(stock.ticker) from all accounts? This cannot be undone.")
             }
         }
     }

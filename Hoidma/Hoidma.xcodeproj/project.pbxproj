@@ -6,6 +6,16 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F4BA52C12F1C265D0073AFBD /* SwiftYFinance in Frameworks */ = {isa = PBXBuildFile; productRef = F4AEC91A2EBEC27D00CC4321 /* SwiftYFinance */; };
+		F4DBF5692F2EA6DC0046117F /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = F4DBF5682F2EA6DC0046117F /* Auth */; };
+		F4DBF56B2F2EA6DC0046117F /* Functions in Frameworks */ = {isa = PBXBuildFile; productRef = F4DBF56A2F2EA6DC0046117F /* Functions */; };
+		F4DBF56D2F2EA6DC0046117F /* PostgREST in Frameworks */ = {isa = PBXBuildFile; productRef = F4DBF56C2F2EA6DC0046117F /* PostgREST */; };
+		F4DBF56F2F2EA6DC0046117F /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = F4DBF56E2F2EA6DC0046117F /* Realtime */; };
+		F4DBF5712F2EA6DC0046117F /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = F4DBF5702F2EA6DC0046117F /* Storage */; };
+		F4DBF5732F2EA6DC0046117F /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = F4DBF5722F2EA6DC0046117F /* Supabase */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		F4AEC8F92EBEC27D00CC4321 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -35,11 +45,6 @@
 			path = Hoidma;
 			sourceTree = "<group>";
 		};
-		F4AEC8FB2EBEC27D00CC4321 /* HoidmaTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = HoidmaTests;
-			sourceTree = "<group>";
-		};
 		F4AEC9052EBEC27D00CC4321 /* HoidmaUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = HoidmaUITests;
@@ -52,6 +57,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F4DBF5712F2EA6DC0046117F /* Storage in Frameworks */,
+				F4DBF56D2F2EA6DC0046117F /* PostgREST in Frameworks */,
+				F4DBF56B2F2EA6DC0046117F /* Functions in Frameworks */,
+				F4DBF5692F2EA6DC0046117F /* Auth in Frameworks */,
+				F4DBF56F2F2EA6DC0046117F /* Realtime in Frameworks */,
+				F4DBF5732F2EA6DC0046117F /* Supabase in Frameworks */,
+				F4BA52C12F1C265D0073AFBD /* SwiftYFinance in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,12 +84,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		F49408632F1C2FDD00080587 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		F4AEC8E22EBEC27B00CC4321 = {
 			isa = PBXGroup;
 			children = (
 				F4AEC8ED2EBEC27B00CC4321 /* Hoidma */,
-				F4AEC8FB2EBEC27D00CC4321 /* HoidmaTests */,
 				F4AEC9052EBEC27D00CC4321 /* HoidmaUITests */,
+				F49408632F1C2FDD00080587 /* Frameworks */,
 				F4AEC8EC2EBEC27B00CC4321 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,10 +131,13 @@
 			);
 			name = Hoidma;
 			packageProductDependencies = (
-				F4AEC9182EBEC27D00CC4321 /* FirebaseCore */,
-				F4AEC9162EBEC27D00CC4321 /* FirebaseAuth */,
-				F4AEC9172EBEC27D00CC4321 /* FirebaseFirestore */,
 				F4AEC91A2EBEC27D00CC4321 /* SwiftYFinance */,
+				F4DBF5682F2EA6DC0046117F /* Auth */,
+				F4DBF56A2F2EA6DC0046117F /* Functions */,
+				F4DBF56C2F2EA6DC0046117F /* PostgREST */,
+				F4DBF56E2F2EA6DC0046117F /* Realtime */,
+				F4DBF5702F2EA6DC0046117F /* Storage */,
+				F4DBF5722F2EA6DC0046117F /* Supabase */,
 			);
 			productName = Hoidma;
 			productReference = F4AEC8EB2EBEC27B00CC4321 /* Hoidma.app */;
@@ -133,9 +155,6 @@
 			);
 			dependencies = (
 				F4AEC8FA2EBEC27D00CC4321 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				F4AEC8FB2EBEC27D00CC4321 /* HoidmaTests */,
 			);
 			name = HoidmaTests;
 			packageProductDependencies = (
@@ -175,7 +194,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2600;
-				LastUpgradeCheck = 2600;
+				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					F4AEC8EA2EBEC27B00CC4321 = {
 						CreatedOnToolsVersion = 26.0.1;
@@ -199,11 +218,11 @@
 			);
 			mainGroup = F4AEC8E22EBEC27B00CC4321;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			packageReferences = (
-				F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				F4AEC9192EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "SwiftYFinance" */,
+				F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
+			preferredProjectObjectVersion = 77;
 			productRefGroup = F4AEC8EC2EBEC27B00CC4321 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -312,6 +331,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2DBY9B53R4;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -335,6 +355,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -375,6 +396,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2DBY9B53R4;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -391,6 +413,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -401,10 +424,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Hoidma;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Hoidma uses Face ID to securely unlock your portfolio and protect your financial data.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -418,6 +445,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = danielfurry.Hoidma;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -432,10 +463,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Hoidma;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Hoidma uses Face ID to securely unlock your portfolio and protect your financial data.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -449,6 +484,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = danielfurry.Hoidma;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -580,14 +619,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 10.19.0;
-			};
-		};
 		F4AEC9192EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "SwiftYFinance" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/AlexRoar/SwiftYFinance";
@@ -596,28 +627,51 @@
 				minimumVersion = 1.4.0;
 			};
 		};
+		F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		F4AEC9162EBEC27D00CC4321 /* FirebaseAuth */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAuth;
-		};
-		F4AEC9172EBEC27D00CC4321 /* FirebaseFirestore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseFirestore;
-		};
-		F4AEC9182EBEC27D00CC4321 /* FirebaseCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F4AEC9152EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseCore;
-		};
 		F4AEC91A2EBEC27D00CC4321 /* SwiftYFinance */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F4AEC9192EBEC27D00CC4321 /* XCRemoteSwiftPackageReference "SwiftYFinance" */;
 			productName = SwiftYFinance;
+		};
+		F4DBF5682F2EA6DC0046117F /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
+		};
+		F4DBF56A2F2EA6DC0046117F /* Functions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Functions;
+		};
+		F4DBF56C2F2EA6DC0046117F /* PostgREST */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = PostgREST;
+		};
+		F4DBF56E2F2EA6DC0046117F /* Realtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Realtime;
+		};
+		F4DBF5702F2EA6DC0046117F /* Storage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Storage;
+		};
+		F4DBF5722F2EA6DC0046117F /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4DBF5672F2EA6DC0046117F /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

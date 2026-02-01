@@ -35,7 +35,6 @@ class StockAPIService {
         let companyName: String
         let periodChanges: [String: Double]? // Percentage changes for different periods
         let previousClose: Double? // Previous trading day's close price
-        let logoURL: String? // Company logo URL
     }
     
     /// Structure to hold company information from Polygon.io
@@ -63,100 +62,84 @@ class StockAPIService {
         let listDate: String?
     }
     
-    /// Structure to hold extracted brand colors from a logo
-    struct BrandColors {
-        let primary: Color? // Dominant color
-        let secondary: Color? // Second most common color
-        let accent: Color? // Accent color
-    }
-    
     /// Fetches the current stock price and company name for a given ticker symbol
     /// - Parameter ticker: Stock ticker symbol (e.g., "AAPL")
     /// - Returns: StockData with price and company name, or nil if fetch fails
-    /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
+    /// - Note: Uses direct Yahoo Finance API to avoid SwiftYFinance crashes
     func fetchStockData(for ticker: String) async -> StockData? {
-        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !trimmedTicker.isEmpty else { return nil }
-        // CRITICAL: Check BEFORE creating continuation to prevent SwiftYFinance from initializing
-        // This prevents crashes during UI testing
+
+        // Skip API calls during UI testing
         guard !AppEnvironment.isUITesting else {
             AppEnvironment.testingLog(" Skipping API call for \(ticker), returning mock data")
             return StockData(
-                price: 150.0, // Mock price
+                price: 150.0,
                 companyName: ticker.uppercased(),
                 periodChanges: nil,
-                previousClose: 150.0,
-                logoURL: nil
+                previousClose: 150.0
             )
         }
-        
-        return await withCheckedContinuation { continuation in
-            // Fetch recent data using SwiftYFinance
-            SwiftYFinance.recentDataBy(identifier: trimmedTicker.uppercased()) { data, error in
-                if let error = error {
-                    print("❌ Error fetching recent data for \(ticker): \(error.localizedDescription)")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                guard let stock = data else {
-                    print("❌ No data returned for \(ticker)")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                // Extract price and previous close (SwiftYFinance may return Float, convert to Double)
-                let price = Double(stock.regularMarketPrice ?? 0.0)
-                let previousClose: Double? = stock.previousClose.map { Double($0) }
-                
-                // Get company name from summary data
-                SwiftYFinance.summaryDataBy(identifier: trimmedTicker.uppercased(), selection: [.price, .summaryProfile]) { summaryData, summaryError in
-                    var companyName = trimmedTicker.uppercased()
-                    
-                    if let summary = summaryData {
-                        // Try price module first for company name
-                        if let priceModule = summary.price {
-                            if let longName = priceModule.longName, !longName.isEmpty {
-                                companyName = longName
-                            } else if let shortName = priceModule.shortName, !shortName.isEmpty, shortName != ticker.uppercased() {
-                                companyName = shortName
-                            }
-                        }
-                        
-                        // If still using ticker, try summary profile (though it doesn't have name directly)
-                        // The price module should have the name we need
-                    }
-                    
-                    // Fetch percentage changes for different periods
-                    Task {
-                        var periodChanges: [String: Double] = [:]
-                        
-                        // Get daily change from recent data
-                        if let previousClose = previousClose, previousClose > 0 {
-                            let dayChange = ((price - previousClose) / previousClose) * 100
-                            periodChanges["1d"] = dayChange
-                            print("📊 Daily change for \(ticker): \(dayChange)% (from previous close: \(previousClose))")
-                        }
-                        
-                        // Fetch historical changes for other periods
-                        let historicalChanges = await self.fetchPeriodChanges(for: ticker, currentPrice: price)
-                        periodChanges.merge(historicalChanges) { (_, new) in new }
-                        
-                        // Fetch company logo
-                        let logoURL = await self.fetchCompanyLogo(for: ticker)
-                        
-                        print("✅ Fetched data for \(ticker): $\(price) - \(companyName)")
-                        let stockData = StockData(
-                            price: price,
-                            companyName: companyName,
-                            periodChanges: periodChanges.isEmpty ? nil : periodChanges,
-                            previousClose: previousClose,
-                            logoURL: logoURL
-                        )
-                        continuation.resume(returning: stockData)
-                    }
-                }
+
+        // Use direct Yahoo Finance API instead of SwiftYFinance to avoid crashes
+        return await fetchStockDataDirect(for: trimmedTicker)
+    }
+
+    /// Direct Yahoo Finance API call without SwiftYFinance library
+    private func fetchStockDataDirect(for ticker: String) async -> StockData? {
+        let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker)?interval=1d&range=5d"
+
+        guard let url = URL(string: urlString) else {
+            print("❌ Invalid URL for ticker: \(ticker)")
+            return nil
+        }
+
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                print("❌ HTTP error fetching \(ticker)")
+                return nil
             }
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let chart = json["chart"] as? [String: Any],
+                  let result = (chart["result"] as? [[String: Any]])?.first,
+                  let meta = result["meta"] as? [String: Any] else {
+                print("❌ Failed to parse response for \(ticker)")
+                return nil
+            }
+
+            // Extract price data
+            let price = meta["regularMarketPrice"] as? Double ?? 0.0
+            let previousClose = meta["previousClose"] as? Double
+            let companyName = (meta["longName"] as? String) ?? (meta["shortName"] as? String) ?? ticker
+
+            // Calculate daily change
+            var periodChanges: [String: Double] = [:]
+            if let prevClose = previousClose, prevClose > 0 {
+                let dayChange = ((price - prevClose) / prevClose) * 100
+                periodChanges["1d"] = dayChange
+                print("📊 \(ticker) daily change: \(String(format: "%.2f", dayChange))% (price: $\(String(format: "%.2f", price)), prevClose: $\(String(format: "%.2f", prevClose)))")
+            } else {
+                print("⚠️ \(ticker) no previousClose available in API response")
+            }
+
+            print("✅ Fetched data for \(ticker): $\(price) - \(companyName)")
+
+            return StockData(
+                price: price,
+                companyName: companyName,
+                periodChanges: periodChanges.isEmpty ? nil : periodChanges,
+                previousClose: previousClose
+            )
+        } catch {
+            print("❌ Error fetching stock data for \(ticker): \(error.localizedDescription)")
+            return nil
         }
     }
     
@@ -167,70 +150,67 @@ class StockAPIService {
     /// - Returns: Dictionary mapping period to percentage change
     private func fetchPeriodChanges(for ticker: String, currentPrice: Double) async -> [String: Double] {
         var periodChanges: [String: Double] = [:]
-        
-        // Define periods with their date ranges
-        let now = Date()
-        let calendar = Calendar.current
-        let periods: [(String, Date)] = [
-            ("1w", calendar.date(byAdding: .day, value: -7, to: now) ?? now),
-            ("1m", calendar.date(byAdding: .month, value: -1, to: now) ?? now),
-            ("3m", calendar.date(byAdding: .month, value: -3, to: now) ?? now),
-            ("ytd", calendar.date(from: calendar.dateComponents([.year], from: now)) ?? now)
+
+        // Skip API calls in UI tests
+        if AppEnvironment.isUITesting {
+            return ["1w": 2.5, "1m": 5.0, "3m": 10.0, "ytd": 15.0]
+        }
+
+        // Define periods with Yahoo Finance range parameters
+        let periods: [(String, String)] = [
+            ("1w", "5d"),
+            ("1m", "1mo"),
+            ("3m", "3mo"),
+            ("ytd", "ytd")
         ]
-        
-        print("🔄 Fetching period changes for \(ticker): \(periods.map { $0.0 })")
-        
+
+        print("🔄 Fetching period changes for \(ticker)")
+
         await withTaskGroup(of: (String, Double?).self) { group in
-            for (periodKey, startDate) in periods {
+            for (periodKey, range) in periods {
                 group.addTask {
-                    // Skip API calls in UI tests
-                    if AppEnvironment.isUITesting {
-                        return (periodKey, 150.0) // Mock price
+                    let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker.uppercased())?interval=1d&range=\(range)"
+
+                    guard let url = URL(string: urlString) else {
+                        return (periodKey, nil)
                     }
-                    
-                    return await withCheckedContinuation { continuation in
-                        // Use SwiftYFinance to fetch chart data
-                        SwiftYFinance.chartDataBy(
-                            identifier: ticker.uppercased(),
-                            start: startDate,
-                            end: now,
-                            interval: .oneday
-                        ) { chartData, error in
-                            if let error = error {
-                                print("❌ Error fetching period change for \(periodKey): \(error.localizedDescription)")
-                                continuation.resume(returning: (periodKey, nil))
-                                return
-                            }
-                            
-                            // Get the first (oldest) price from the chart data
-                            if let chart = chartData,
-                               let first = chart.first,
-                               let closePrice = first.close {
-                                let startPrice = Double(closePrice)
-                                if startPrice > 0 {
-                                    // Calculate percentage change
-                                    let change = ((currentPrice - startPrice) / startPrice) * 100
-                                    continuation.resume(returning: (periodKey, change))
-                                    return
-                                }
-                            }
-                            continuation.resume(returning: (periodKey, nil))
+
+                    do {
+                        var request = URLRequest(url: url)
+                        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+                        let (data, _) = try await URLSession.shared.data(for: request)
+
+                        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let chart = json["chart"] as? [String: Any],
+                              let result = (chart["result"] as? [[String: Any]])?.first,
+                              let indicators = result["indicators"] as? [String: Any],
+                              let quote = (indicators["quote"] as? [[String: Any]])?.first,
+                              let closes = quote["close"] as? [Double?],
+                              let firstClose = closes.first(where: { $0 != nil }) as? Double else {
+                            return (periodKey, nil)
                         }
+
+                        if firstClose > 0 {
+                            let change = ((currentPrice - firstClose) / firstClose) * 100
+                            return (periodKey, change)
+                        }
+                    } catch {
+                        print("❌ Error fetching \(periodKey) for \(ticker): \(error.localizedDescription)")
                     }
+
+                    return (periodKey, nil)
                 }
             }
-            
+
             for await (period, change) in group {
                 if let change = change {
                     periodChanges[period] = change
-                    print("✅ Fetched \(period) change for \(ticker): \(change)%")
-                } else {
-                    print("⚠️ Failed to fetch \(period) change for \(ticker)")
+                    print("✅ Fetched \(period) change for \(ticker): \(String(format: "%.2f", change))%")
                 }
             }
         }
-        
-        print("📊 Final period changes for \(ticker): \(periodChanges)")
+
         return periodChanges
     }
     
@@ -299,260 +279,134 @@ class StockAPIService {
     /// Fetches historical price for a specific time period
     /// - Parameters:
     ///   - ticker: Stock ticker symbol
-    ///   - period: Time period string (1d, 5d, 1mo, 3mo, 1y) - converted to Date range
+    ///   - period: Time period string (1d, 5d, 1mo, 3mo, 1y)
     /// - Returns: Price as Double (closing price from the start of the period), or nil if fetch fails
-    /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchHistoricalPrice(for ticker: String, period: String) async -> Double? {
-        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !trimmedTicker.isEmpty else { return nil }
+
         // Skip API calls during UI testing
         if AppEnvironment.isUITesting {
-            return 150.0 // Mock historical price
+            return 150.0
         }
-        let calendar = Calendar.current
-        let now = Date()
-        let startDate: Date
-        
-        // Convert period string to Date
+
+        // Map period to Yahoo Finance range
+        let range: String
         switch period.lowercased() {
         case "1d", "5d":
-            startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
+            range = "5d"
         case "1mo":
-            startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            range = "1mo"
         case "3mo":
-            startDate = calendar.date(byAdding: .month, value: -3, to: now) ?? now
+            range = "3mo"
         case "1y":
-            startDate = calendar.date(byAdding: .year, value: -1, to: now) ?? now
+            range = "1y"
         default:
-            startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
+            range = "5d"
         }
-        
-        // Skip API calls in UI tests
-        guard !AppEnvironment.isUITesting else {
-            return 150.0 // Mock price
-        }
-        
-        return await withCheckedContinuation { continuation in
-            SwiftYFinance.chartDataBy(
-                identifier: trimmedTicker.uppercased(),
-                start: startDate,
-                end: now,
-                interval: .oneday
-            ) { chartData, error in
-                if let error = error {
-                    print("❌ Error fetching historical price for \(ticker): \(error.localizedDescription)")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                // Get the first (oldest) price from the chart data (convert Float to Double)
-                if let chart = chartData,
-                   let first = chart.first,
-                   let closePrice = first.close {
-                    let price = Double(closePrice)
-                    continuation.resume(returning: price)
-                    return
-                }
-                continuation.resume(returning: nil)
+
+        let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(trimmedTicker)?interval=1d&range=\(range)"
+
+        guard let url = URL(string: urlString) else { return nil }
+
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let chart = json["chart"] as? [String: Any],
+                  let result = (chart["result"] as? [[String: Any]])?.first,
+                  let indicators = result["indicators"] as? [String: Any],
+                  let quote = (indicators["quote"] as? [[String: Any]])?.first,
+                  let closes = quote["close"] as? [Double?],
+                  let firstClose = closes.first(where: { $0 != nil }) as? Double else {
+                return nil
             }
+
+            return firstClose
+        } catch {
+            print("❌ Error fetching historical price for \(ticker): \(error.localizedDescription)")
+            return nil
         }
     }
     
     /// Fetches historical prices for all time periods
     /// - Parameter ticker: Stock ticker symbol
     /// - Returns: Dictionary mapping period to price, or nil if fetch fails
-    /// - Note: Uses SwiftYFinance library for reliable Yahoo Finance API access
     func fetchHistoricalPrices(for ticker: String) async -> [String: Double]? {
-        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !trimmedTicker.isEmpty else { return nil }
+
         // Skip API calls during UI testing
         if AppEnvironment.isUITesting {
-            return ["1d": 150.0, "1w": 148.0, "1m": 145.0, "3m": 140.0, "ytd": 135.0] // Mock historical prices
+            return ["1d": 150.0, "1w": 148.0, "1m": 145.0, "3m": 140.0, "ytd": 135.0]
         }
+
         var historicalPrices: [String: Double] = [:]
-        let calendar = Calendar.current
-        let now = Date()
-        
-        // Fetch prices for different periods concurrently
+
+        // Define periods with Yahoo Finance ranges
+        let periods: [(String, String)] = [
+            ("1d", "5d"),
+            ("1w", "5d"),
+            ("1m", "1mo"),
+            ("3m", "3mo"),
+            ("ytd", "ytd")
+        ]
+
         await withTaskGroup(of: (String, Double?).self) { group in
-            // 1 day ago (use 5 day range to ensure we get data)
-            group.addTask {
-                let startDate = calendar.date(byAdding: .day, value: -5, to: now) ?? now
-                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "1d")
-            }
-            
-            // 1 week ago
-            group.addTask {
-                let startDate = calendar.date(byAdding: .day, value: -7, to: now) ?? now
-                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "1w")
-            }
-            
-            // 1 month ago
-            group.addTask {
-                let startDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
-                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "1m")
-            }
-            
-            // 3 months ago
-            group.addTask {
-                let startDate = calendar.date(byAdding: .month, value: -3, to: now) ?? now
-                return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startDate, end: now, periodKey: "3m")
-            }
-            
-            // Year to date (start of current year)
-            group.addTask {
-                if let startOfYear = calendar.date(from: calendar.dateComponents([.year], from: now)) {
-                    return await self.fetchHistoricalPriceForDateRange(ticker: ticker, start: startOfYear, end: now, periodKey: "ytd")
+            for (periodKey, range) in periods {
+                group.addTask {
+                    return await self.fetchHistoricalPriceForRange(ticker: trimmedTicker, range: range, periodKey: periodKey)
                 }
-                return ("ytd", nil)
             }
-            
+
             for await (period, price) in group {
                 if let price = price {
                     historicalPrices[period] = price
                 }
             }
         }
-        
+
         return historicalPrices.isEmpty ? nil : historicalPrices
     }
-    
-    /// Helper function to fetch historical price for a date range using SwiftYFinance
-    private func fetchHistoricalPriceForDateRange(ticker: String, start: Date, end: Date, periodKey: String) async -> (String, Double?) {
-        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTicker.isEmpty else { return (periodKey, nil) }
+
+    /// Helper function to fetch historical price using Yahoo Finance API directly
+    private func fetchHistoricalPriceForRange(ticker: String, range: String, periodKey: String) async -> (String, Double?) {
         // Skip API calls in UI tests
         if AppEnvironment.isUITesting {
-            return (periodKey, 150.0) // Mock price
+            return (periodKey, 150.0)
         }
-        
-        return await withCheckedContinuation { continuation in
-            SwiftYFinance.chartDataBy(
-                identifier: trimmedTicker.uppercased(),
-                start: start,
-                end: end,
-                interval: .oneday
-            ) { chartData, error in
-                if let error = error {
-                    print("❌ Error fetching \(periodKey) price for \(ticker): \(error.localizedDescription)")
-                    continuation.resume(returning: (periodKey, nil))
-                    return
-                }
-                
-                if let chart = chartData,
-                   let first = chart.first,
-                   let closePrice = first.close {
-                    let price = Double(closePrice)
-                    continuation.resume(returning: (periodKey, price))
-                    return
-                }
-                continuation.resume(returning: (periodKey, nil))
-            }
-        }
-    }
-    
-    /// Fetches company logo URL using fallback services
-    /// - Parameter ticker: Stock ticker symbol
-    /// - Returns: Logo URL as String, or nil if fetch fails
-    func fetchCompanyLogo(for ticker: String) async -> String? {
-        let trimmedTicker = ticker.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTicker.isEmpty else { return nil }
-        // Skip API calls in UI tests
-        if AppEnvironment.isUITesting {
-            return nil // No logo in test mode
-        }
-        
-        // Try Financial Modeling Prep API (legacy)
-        if let logo = await fetchLogoFromFMP(for: trimmedTicker) {
-            print("✅ Using FMP logo for \(ticker): \(logo)")
-            return logo
-        }
-        
-        // Final fallback: Try using a pattern-based approach for major companies
-        let alternativeLogo = await fetchLogoFromAlternative(for: ticker)
-        print("🔄 Using alternative logo URL for \(ticker): \(alternativeLogo ?? "nil")")
-        return alternativeLogo
-    }
-    
-    /// Fetches image data from logo URL (for authenticated image loading)
-    /// - Parameter ticker: Stock ticker symbol
-    /// - Returns: Image data as Data, or nil if fetch fails
-    func fetchAuthenticatedLogoImage(for ticker: String) async -> Data? {
-        // Get logo URL from Polygon.io
-        if let logoURL = await fetchCompanyLogo(for: ticker),
-           let url = URL(string: logoURL) {
-            do {
-                let (data, response) = try await URLSession.shared.data(from: url)
-                
-                guard let httpResponse = response as? HTTPURLResponse,
-                      httpResponse.statusCode == 200 else {
-                    return nil
-                }
-                
-                return data
-            } catch {
-                print("❌ Error fetching logo image for \(ticker): \(error.localizedDescription)")
-                return nil
-            }
-        }
-        
-        return nil
-    }
-    
-    /// Fetches logo from Financial Modeling Prep (legacy endpoint - may not work for new users)
-    private func fetchLogoFromFMP(for ticker: String) async -> String? {
-        let urlString = APIConfig.Endpoints.fmpProfile(ticker: ticker)
-        
+
+        let urlString = "https://query1.finance.yahoo.com/v8/finance/chart/\(ticker)?interval=1d&range=\(range)"
+
         guard let url = URL(string: urlString) else {
-            return nil
+            return (periodKey, nil)
         }
-        
+
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                return nil
+            var request = URLRequest(url: url)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let chart = json["chart"] as? [String: Any],
+                  let result = (chart["result"] as? [[String: Any]])?.first,
+                  let indicators = result["indicators"] as? [String: Any],
+                  let quote = (indicators["quote"] as? [[String: Any]])?.first,
+                  let closes = quote["close"] as? [Double?],
+                  let firstClose = closes.first(where: { $0 != nil }) as? Double else {
+                return (periodKey, nil)
             }
-            
-            // Parse JSON response
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  !json.isEmpty,
-                  let firstResult = json.first else {
-                return nil
-            }
-            
-            // Try multiple possible field names for logo
-            let possibleLogoFields = ["image", "logo", "logoUrl", "logo_url", "companyLogo", "company_logo"]
-            
-            for fieldName in possibleLogoFields {
-                if let logo = firstResult[fieldName] as? String, !logo.isEmpty, logo != "null" {
-                    if logo.hasPrefix("http://") || logo.hasPrefix("https://") {
-                        print("✅ Fetched logo for \(ticker) from FMP: \(logo)")
-                        return logo
-                    }
-                }
-            }
+
+            return (periodKey, firstClose)
         } catch {
-            // Silently fail and try alternative
+            print("❌ Error fetching \(periodKey) price for \(ticker): \(error.localizedDescription)")
+            return (periodKey, nil)
         }
-        
-        return nil
     }
-    
-    /// Fetches logo using alternative free services or pattern-based URLs
-    /// Fallback method when Polygon.io doesn't have a logo
-    private func fetchLogoFromAlternative(for ticker: String) async -> String? {
-        // Use free logo CDN services as last resort
-        // Format: https://companieslogo.com/img/orig/{ticker}.png
-        let companiesLogoURL = "https://companieslogo.com/img/orig/\(ticker.lowercased()).png"
-        
-        // Return the URL - AsyncImage will handle 404s gracefully
-        // This is faster than checking each URL first
-        print("🔄 Using alternative logo URL for \(ticker): \(companiesLogoURL)")
-        return companiesLogoURL
-    }
-    
     // MARK: - Polygon.io Integration
     
     /// Fetches company information from Polygon.io
@@ -702,118 +556,6 @@ class StockAPIService {
         }
         
         return companyInfoDict
-    }
-    
-    // MARK: - Brand Color Extraction
-    
-    /// Extracts dominant colors from a company logo image
-    /// - Parameter logoURL: URL of the company logo
-    /// - Returns: BrandColors with primary, secondary, and accent colors, or nil if extraction fails
-    func extractBrandColors(fromLogoURL logoURL: String) async -> BrandColors? {
-        guard let url = URL(string: logoURL) else {
-            return nil
-        }
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let image = UIImage(data: data) else {
-                return nil
-            }
-            
-            return extractColors(from: image)
-        } catch {
-            print("❌ Error fetching logo for color extraction: \(error.localizedDescription)")
-            return nil
-        }
-    }
-    
-    /// Extracts dominant colors from a UIImage
-    /// - Parameter image: The image to analyze
-    /// - Returns: BrandColors with primary, secondary, and accent colors
-    private func extractColors(from image: UIImage) -> BrandColors? {
-        guard let cgImage = image.cgImage else {
-            return nil
-        }
-        
-        let width = cgImage.width
-        let height = cgImage.height
-        
-        // Create a bitmap context
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bytesPerPixel = 4
-        let bytesPerRow = bytesPerPixel * width
-        let bitsPerComponent = 8
-        
-        var pixelData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
-        
-        guard let context = CGContext(
-            data: &pixelData,
-            width: width,
-            height: height,
-            bitsPerComponent: bitsPerComponent,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            return nil
-        }
-        
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        
-        // Sample pixels (every 10th pixel for performance)
-        var colorCounts: [UInt32: Int] = [:]
-        let sampleStep = 10
-        
-        for y in stride(from: 0, to: height, by: sampleStep) {
-            for x in stride(from: 0, to: width, by: sampleStep) {
-                let pixelIndex = (y * width + x) * bytesPerPixel
-                
-                if pixelIndex + 3 < pixelData.count {
-                    let r = pixelData[pixelIndex]
-                    let g = pixelData[pixelIndex + 1]
-                    let b = pixelData[pixelIndex + 2]
-                    let a = pixelData[pixelIndex + 3]
-                    
-                    // Skip transparent or very light pixels
-                    if a > 50 {
-                        // Skip white/very light colors (likely background)
-                        let brightness = (Double(r) + Double(g) + Double(b)) / 3.0
-                        if brightness < 240 {
-                            let colorKey = (UInt32(r) << 16) | (UInt32(g) << 8) | UInt32(b)
-                            colorCounts[colorKey, default: 0] += 1
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Get top 3 most common colors
-        let sortedColors = colorCounts.sorted { $0.value > $1.value }.prefix(3)
-        
-        var primary: Color?
-        var secondary: Color?
-        var accent: Color?
-        
-        for (index, (colorKey, _)) in sortedColors.enumerated() {
-            let r = Double((colorKey >> 16) & 0xFF) / 255.0
-            let g = Double((colorKey >> 8) & 0xFF) / 255.0
-            let b = Double(colorKey & 0xFF) / 255.0
-            
-            let color = Color(red: r, green: g, blue: b)
-            
-            switch index {
-            case 0:
-                primary = color
-            case 1:
-                secondary = color
-            case 2:
-                accent = color
-            default:
-                break
-            }
-        }
-        
-        return BrandColors(primary: primary, secondary: secondary, accent: accent)
     }
 }
 

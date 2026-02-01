@@ -15,8 +15,8 @@ class StockViewModel: ObservableObject {
     private var useLocalStorage: Bool { AppEnvironment.useLocalStorage }
     private var isUITesting: Bool { AppEnvironment.isUITesting }
 
-    // The placeholder Firebase Manager (only used if not using local storage)
-    let manager = FirebaseManager()
+    // Supabase Manager for cloud storage (only used if not using local storage)
+    let manager = SupabaseManager()
     
     // API service for fetching real stock data
     private let apiService = StockAPIService.shared
@@ -28,10 +28,8 @@ class StockViewModel: ObservableObject {
             // Load from local storage
             loadLocalStocks()
         } else {
-            // Use Firebase
-            manager.startDataListener()
-            
-            // Monitor stocks from the Firebase Manager
+            // Use Supabase - listener starts automatically when user authenticates
+            // Monitor stocks from the Supabase Manager
             manager.$stocks
                 .sink { [weak self] newStocks in
                     guard let self = self else { return }
@@ -100,6 +98,7 @@ class StockViewModel: ObservableObject {
                         let placeholderPrice = stock.purchasePrice * 1.1 // 10% gain
                         self.updatePriceData(for: stock, newPrice: placeholderPrice)
                     }
+                    self.updateColorAssignments()
                 }
             }
         } else {
@@ -107,6 +106,23 @@ class StockViewModel: ObservableObject {
         }
     }
     
+    /// Updates color assignments based on current stock values (largest to smallest)
+    @MainActor
+    func updateColorAssignments() {
+        let sortedTickers = stocks
+            .filter { $0.isMaritalStatus }
+            .sorted { stock1, stock2 in
+                let shares1 = stock1.lots.isEmpty ? Double(stock1.shares) : stock1.lots.reduce(0.0) { $0 + $1.shares }
+                let shares2 = stock2.lots.isEmpty ? Double(stock2.shares) : stock2.lots.reduce(0.0) { $0 + $1.shares }
+                let price1 = stockPrices[stock1.ticker]?.currentPrice ?? stock1.purchasePrice
+                let price2 = stockPrices[stock2.ticker]?.currentPrice ?? stock2.purchasePrice
+                return (price1 * shares1) > (price2 * shares2)
+            }
+            .map { $0.ticker }
+
+        StockColorManager.shared.updateColorAssignments(sortedTickers: sortedTickers)
+    }
+
     // Save stocks to local storage
     private func saveLocalStocks() {
         // UserDefaults is fast for small datasets, so synchronous is fine
@@ -150,10 +166,13 @@ class StockViewModel: ObservableObject {
                 }
                 
                 // Update price with historical data and API period changes if available
-                updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose, logoURL: stockData.logoURL)
+                updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose)
                 
-                // Update company name if it's different (and not just the ticker)
-                if stock.companyName != stockData.companyName && stockData.companyName != stock.ticker.uppercased() {
+                // Update company name if API returns a real name (not just the ticker)
+                // Also update if current name is just the ticker placeholder
+                let apiHasRealName = !stockData.companyName.isEmpty && stockData.companyName != stock.ticker.uppercased()
+                let currentNameIsPlaceholder = stock.companyName == stock.ticker.uppercased() || stock.companyName == stock.ticker
+                if apiHasRealName && (stock.companyName != stockData.companyName || currentNameIsPlaceholder) {
                     updateCompanyName(for: stock.ticker, newName: stockData.companyName)
                 }
             } else {
@@ -163,23 +182,29 @@ class StockViewModel: ObservableObject {
                 updatePriceData(for: stock, newPrice: fallbackPrice)
             }
         }
+
+        // Update color assignments based on new values
+        updateColorAssignments()
     }
-    
+
     /// Updates the company name for a stock
     @MainActor
     private func updateCompanyName(for ticker: String, newName: String) {
-        // Find and update the stock in the manager's stocks array
-        if let index = manager.stocks.firstIndex(where: { $0.ticker == ticker }) {
-            var updatedStock = manager.stocks[index]
+        // Find and update the stock in the local stocks array
+        if let index = stocks.firstIndex(where: { $0.ticker == ticker }) {
+            var updatedStock = stocks[index]
             updatedStock.companyName = newName
-            manager.stocks[index] = updatedStock
-            
-            // Update in our local stocks array too
-            if let localIndex = stocks.firstIndex(where: { $0.ticker == ticker }) {
-                stocks[localIndex] = updatedStock
+            stocks[index] = updatedStock  // Replace entire object to trigger UI update
+
+            if useLocalStorage {
+                saveLocalStocks()
+            } else {
+                // Also update in manager's stocks array for Supabase mode
+                if let managerIndex = manager.stocks.firstIndex(where: { $0.ticker == ticker }) {
+                    manager.stocks[managerIndex] = updatedStock
+                }
             }
-            
-            // Stock is already saved to Firestore via manager.commit in FirebaseManager
+
             print("✅ Updated company name for \(ticker) to \(newName)")
         }
     }
@@ -210,7 +235,7 @@ class StockViewModel: ObservableObject {
             
             if let stockData = await apiService.fetchStockData(for: stock.ticker) {
                 await MainActor.run {
-                    updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose, logoURL: stockData.logoURL)
+                    updatePriceData(for: stock, newPrice: stockData.price, historicalPrices: historicalPrices, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose)
                 }
             } else {
                 // Fallback to mock price if API fails
@@ -220,50 +245,12 @@ class StockViewModel: ObservableObject {
                     updatePriceData(for: stock, newPrice: fallbackPrice)
                 }
             }
-            
-            // If logo is missing, try to fetch it separately
-            await MainActor.run {
-                if stockPrices[stock.ticker]?.logoURL == nil || stockPrices[stock.ticker]?.logoURL?.isEmpty == true {
-                    Task {
-                        if let logoURL = await apiService.fetchCompanyLogo(for: stock.ticker) {
-                            await MainActor.run {
-                                if var existingData = stockPrices[stock.ticker] {
-                                    existingData.logoURL = logoURL
-                                    withAnimation {
-                                        stockPrices[stock.ticker] = existingData
-                                    }
-                                    print("✅ Updated logo URL for \(stock.ticker): \(logoURL)")
-                                }
-                            }
-                        } else {
-                            print("⚠️ Failed to fetch logo for \(stock.ticker)")
-                        }
-                    }
-                }
-            }
         }
     }
-    
-    /// Fetches company logo separately (public method for manual fetching)
-    func fetchLogo(for ticker: String) {
-        Task {
-            if let logoURL = await apiService.fetchCompanyLogo(for: ticker) {
-                await MainActor.run {
-                    if var existingData = stockPrices[ticker] {
-                        existingData.logoURL = logoURL
-                        withAnimation {
-                            stockPrices[ticker] = existingData
-                        }
-                        print("✅ Fetched and updated logo URL for \(ticker): \(logoURL)")
-                    }
-                }
-            }
-        }
-    }
-    
+
     /// Updates the price data structure with a new price
     @MainActor
-    private func updatePriceData(for stock: Stock, newPrice: Double, historicalPrices: [String: Double]? = nil, apiPeriodChanges: [String: Double]? = nil, previousClose: Double? = nil, logoURL: String? = nil) {
+    private func updatePriceData(for stock: Stock, newPrice: Double, historicalPrices: [String: Double]? = nil, apiPeriodChanges: [String: Double]? = nil, previousClose: Double? = nil) {
         let newProfitLoss = (newPrice * Double(stock.shares)) - stock.totalCost
         let newChangePercent = (newProfitLoss / stock.totalCost) * 100
         
@@ -275,8 +262,9 @@ class StockViewModel: ObservableObject {
         // Initialize or update period start prices
         let isNewStock = existingData == nil
         
-        // For new stocks, try to use historical prices from API, otherwise use current price
-        var dailyStartPrice = existingData?.dailyStartPrice ?? (historicalPrices?["1d"] ?? newPrice)
+        // For daily, prioritize previousClose (the actual previous trading day's close)
+        // This is more accurate than historical data for daily returns
+        var dailyStartPrice = previousClose ?? existingData?.dailyStartPrice ?? (historicalPrices?["1d"] ?? newPrice)
         var weeklyStartPrice = existingData?.weeklyStartPrice ?? (historicalPrices?["1w"] ?? newPrice)
         var monthlyStartPrice = existingData?.monthlyStartPrice ?? (historicalPrices?["1m"] ?? newPrice)
         var threeMonthsStartPrice = existingData?.threeMonthsStartPrice ?? (historicalPrices?["3m"] ?? newPrice)
@@ -318,8 +306,9 @@ class StockViewModel: ObservableObject {
         }
         
         // Reset daily price if it's a new day
+        // Use previousClose if available (more accurate), otherwise use current price
         if !calendar.isDate(dailyStartTime, inSameDayAs: now) {
-            dailyStartPrice = newPrice
+            dailyStartPrice = previousClose ?? newPrice
             dailyStartTime = now
         }
         
@@ -357,10 +346,7 @@ class StockViewModel: ObservableObject {
         
         // Update previous close if provided (use existing if not provided)
         let updatedPreviousClose = previousClose ?? existingData?.previousClose
-        
-        // Update logo URL if provided (use existing if not provided)
-        let updatedLogoURL = logoURL ?? existingData?.logoURL
-        
+
         withAnimation {
             stockPrices[stock.ticker] = StockPriceData(
                 ticker: stock.ticker,
@@ -380,8 +366,7 @@ class StockViewModel: ObservableObject {
                 ytdStartTime: ytdStartTime,
                 allTimeStartTime: allTimeStartTime,
                 apiPeriodChanges: updatedApiPeriodChanges,
-                previousClose: updatedPreviousClose,
-                logoURL: updatedLogoURL
+                previousClose: updatedPreviousClose
             )
         }
     }
@@ -421,12 +406,12 @@ class StockViewModel: ObservableObject {
             if useLocalStorage {
                 saveLocalStocks()
             } else {
-                manager.commit(newStock: updatedStock)
+                Task { await manager.commit(newStock: updatedStock) }
             }
-            
+
             // Trigger price update to recalculate profit/loss with new aggregated values
             if let priceData = stockPrices[ticker] {
-                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose)
             } else {
             // Fetch price in background (don't block)
             Task { @MainActor [weak self] in
@@ -438,12 +423,12 @@ class StockViewModel: ObservableObject {
             let lot = StockLot(accountName: accountName, shares: shares, purchasePrice: price)
             let newStock = Stock(ticker: ticker, companyName: placeholderCompanyName, purchasePrice: price, shares: Int(shares), isMaritalStatus: true, lots: [lot])
             stocks.append(newStock)
-            
+
             // FOR TESTING: Save locally immediately (synchronous, fast)
             if useLocalStorage {
                 saveLocalStocks()
             } else {
-                manager.commit(newStock: newStock)
+                Task { await manager.commit(newStock: newStock) }
             }
             
             // Show placeholder price immediately, then fetch real price in background
@@ -476,7 +461,7 @@ class StockViewModel: ObservableObject {
         
         // Just fetch current price, skip historical data for now
         if let stockData = await apiService.fetchStockData(for: stock.ticker) {
-            updatePriceData(for: stock, newPrice: stockData.price, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose, logoURL: stockData.logoURL)
+            updatePriceData(for: stock, newPrice: stockData.price, apiPeriodChanges: stockData.periodChanges, previousClose: stockData.previousClose)
             
             // Fetch historical prices in background after showing current price
             Task { @MainActor [weak self] in
@@ -489,8 +474,7 @@ class StockViewModel: ObservableObject {
                             newPrice: existingData.currentPrice,
                             historicalPrices: historicalPrices,
                             apiPeriodChanges: existingData.apiPeriodChanges,
-                            previousClose: existingData.previousClose,
-                            logoURL: existingData.logoURL
+                            previousClose: existingData.previousClose
                         )
                     }
                 }
@@ -513,12 +497,16 @@ class StockViewModel: ObservableObject {
             AppEnvironment.testingLog(" Skipping updateCompanyNameAsync for \(ticker)")
             return
         }
-        
+
         if let stockData = await apiService.fetchStockData(for: trimmedTicker),
            let index = stocks.firstIndex(where: { $0.ticker == ticker }),
            stockData.companyName != trimmedTicker.uppercased() && !stockData.companyName.isEmpty {
             // Update company name if we got a real one from API
-            stocks[index].companyName = stockData.companyName
+            // Replace entire object to trigger SwiftUI update
+            var updatedStock = stocks[index]
+            updatedStock.companyName = stockData.companyName
+            stocks[index] = updatedStock
+            print("✅ Updated company name for \(ticker) to \(stockData.companyName)")
             if useLocalStorage {
                 saveLocalStocks()
             }
@@ -529,24 +517,24 @@ class StockViewModel: ObservableObject {
         // Remove from local array
         stocks.removeAll { $0.ticker == ticker }
         stockPrices.removeValue(forKey: ticker)
-        
-        // FOR TESTING: Save locally instead of Firebase
+
+        // FOR TESTING: Save locally instead of Supabase
         if useLocalStorage {
             saveLocalStocks()
         } else {
-            manager.removeStock(ticker: ticker)
+            Task { await manager.removeStock(ticker: ticker) }
         }
     }
     
     func updateStockLots(ticker: String, lots: [StockLot]) {
         if let index = stocks.firstIndex(where: { $0.ticker == ticker }) {
             let existingStock = stocks[index]
-            
+
             // Calculate aggregated values from all lots
             let totalShares = lots.reduce(0.0) { $0 + $1.shares }
             let totalCost = lots.reduce(0.0) { $0 + $1.totalCost }
             let averagePurchasePrice = totalShares > 0 ? totalCost / totalShares : existingStock.purchasePrice
-            
+
             // Create a new Stock with updated lots and aggregated values
             let newStock = Stock(
                 ticker: existingStock.ticker,
@@ -557,17 +545,17 @@ class StockViewModel: ObservableObject {
                 lots: lots
             )
             stocks[index] = newStock
-            
-            // FOR TESTING: Save locally instead of Firebase
+
+            // FOR TESTING: Save locally instead of Supabase
             if useLocalStorage {
                 saveLocalStocks()
             } else {
-                manager.commit(newStock: newStock)
+                Task { await manager.commit(newStock: newStock) }
             }
             
             // Trigger price update to recalculate profit/loss with new aggregated values
             if let priceData = stockPrices[ticker] {
-                updatePriceData(for: newStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+                updatePriceData(for: newStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose)
             } else {
                 updatePrice(for: newStock)
             }
@@ -620,23 +608,23 @@ class StockViewModel: ObservableObject {
             )
             
             stocks[index] = updatedStock
-            
-            // FOR TESTING: Save locally instead of Firebase
+
+            // FOR TESTING: Save locally instead of Supabase
             if useLocalStorage {
                 saveLocalStocks()
             } else {
-                manager.commit(newStock: updatedStock)
+                Task { await manager.commit(newStock: updatedStock) }
             }
-            
+
             // Trigger price update to recalculate profit/loss
             if let priceData = stockPrices[ticker] {
-                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose)
             } else {
                 updatePrice(for: updatedStock)
             }
         }
     }
-    
+
     func addSharesToLot(ticker: String, lotId: UUID, sharesToAdd: Double, newPurchasePrice: Double) {
         if let index = stocks.firstIndex(where: { $0.ticker == ticker }) {
             let existingStock = stocks[index]
@@ -678,23 +666,23 @@ class StockViewModel: ObservableObject {
             )
             
             stocks[index] = updatedStock
-            
-            // FOR TESTING: Save locally instead of Firebase
+
+            // FOR TESTING: Save locally instead of Supabase
             if useLocalStorage {
                 saveLocalStocks()
             } else {
-                manager.commit(newStock: updatedStock)
+                Task { await manager.commit(newStock: updatedStock) }
             }
-            
+
             // Trigger price update to recalculate profit/loss
             if let priceData = stockPrices[ticker] {
-                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose, logoURL: priceData.logoURL)
+                updatePriceData(for: updatedStock, newPrice: priceData.currentPrice, apiPeriodChanges: priceData.apiPeriodChanges, previousClose: priceData.previousClose)
             } else {
                 updatePrice(for: updatedStock)
             }
         }
     }
-    
+
     var totalPortfolioValue: Double {
         stocks.reduce(0) { total, stock in
             guard stock.isMaritalStatus,

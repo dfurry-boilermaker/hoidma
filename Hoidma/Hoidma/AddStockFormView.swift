@@ -4,16 +4,31 @@ struct AddStockFormView: View {
     @ObservedObject var viewModel: StockViewModel
     @Binding var isPresented: Bool
     @AppStorage("isDarkMode") private var isDarkMode: Bool = false
-    
+
     @State private var tickerInput: String = ""
     @State private var priceInput: String = ""
     @State private var sharesInput: String = ""
     @State private var accountNameInput: String = ""
     @State private var commitError: String? = nil
     @FocusState private var focusedField: Field?
-    
+
     enum Field {
         case ticker, price, shares, accountName
+    }
+
+    /// Get unique account names from existing stocks
+    private var existingAccountNames: [String] {
+        let allAccounts = viewModel.stocks.flatMap { $0.lots.map { $0.accountName } }
+        return Array(Set(allAccounts)).sorted()
+    }
+
+    /// Filtered suggestions based on current input
+    private var filteredSuggestions: [String] {
+        let input = accountNameInput.lowercased().trimmingCharacters(in: .whitespaces)
+        if input.isEmpty {
+            return existingAccountNames
+        }
+        return existingAccountNames.filter { $0.lowercased().contains(input) }
     }
     
     var body: some View {
@@ -64,7 +79,7 @@ struct AddStockFormView: View {
                     Text("Account Name")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color.secondary)
-                    
+
                     TextField("Indv, 401k, Roth IRA, etc.", text: $accountNameInput)
                         .font(.system(size: 18, weight: .regular))
                         .foregroundColor(Color.primary)
@@ -73,6 +88,33 @@ struct AddStockFormView: View {
                         .padding(.horizontal, 16)
                         .background(Color(UIColor.secondarySystemBackground))
                         .cornerRadius(8)
+
+                    // Account name suggestions
+                    if !existingAccountNames.isEmpty && focusedField == .accountName {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(filteredSuggestions, id: \.self) { account in
+                                    Button {
+                                        accountNameInput = account
+                                        focusedField = .price
+                                    } label: {
+                                        Text(account)
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundColor(Color.primary)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(Color(UIColor.tertiarySystemBackground))
+                                            .cornerRadius(16)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 16)
+                                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                            )
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: 36)
+                    }
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {

@@ -1,38 +1,38 @@
 import SwiftUI
 
-struct PhoneAuthView: View {
-    @EnvironmentObject var authManager: AuthManager
-    @State private var phoneNumber: String = ""
+struct EmailAuthView: View {
+    @EnvironmentObject var authManager: SupabaseAuthManager
+    @State private var email: String = ""
     @State private var verificationCode: String = ""
     @State private var isVerificationStep = false
     @State private var showError = false
-    @FocusState private var isPhoneFocused: Bool
+    @FocusState private var isEmailFocused: Bool
     @FocusState private var isCodeFocused: Bool
-    
+
     var body: some View {
         ZStack {
             // Background
             Color(UIColor.systemBackground)
                 .ignoresSafeArea()
-            
+
             VStack(spacing: 24) {
                 Spacer()
-                
+
                 // Logo
                 Image("hoidma")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(height: 80)
                     .padding(.bottom, 20)
-                
+
                 if !isVerificationStep {
-                    // Phone number entry
-                    phoneNumberView
+                    // Email entry
+                    emailEntryView
                 } else {
                     // Verification code entry
                     verificationCodeView
                 }
-                
+
                 Spacer()
             }
             .padding(.horizontal, 32)
@@ -46,85 +46,77 @@ struct PhoneAuthView: View {
             showError = newValue != nil
         }
     }
-    
-    private var phoneNumberView: some View {
+
+    private var emailEntryView: some View {
         VStack(spacing: 20) {
-            Text("Sign in with your phone number")
+            Text("Sign in with your email")
                 .font(.system(size: 24, weight: .bold))
                 .multilineTextAlignment(.center)
-            
+
             Text("We'll send you a verification code")
                 .font(.system(size: 16))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-            
+
             VStack(alignment: .leading, spacing: 8) {
-                Text("Phone Number")
+                Text("Email Address")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.secondary)
-                
-                HStack {
-                    Text("+")
-                        .foregroundColor(.secondary)
-                    
-                    TextField("1234567890", text: $phoneNumber)
-                        .keyboardType(.phonePad)
-                        .textContentType(.telephoneNumber)
-                        .focused($isPhoneFocused)
-                        .font(.system(size: 18))
-                }
-                .padding()
-                .background(Color(UIColor.secondarySystemBackground))
-                .cornerRadius(12)
+
+                TextField("you@example.com", text: $email)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                    .autocapitalization(.none)
+                    .autocorrectionDisabled()
+                    .focused($isEmailFocused)
+                    .font(.system(size: 18))
+                    .padding()
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(12)
             }
-            
+
             Button {
                 Task {
                     await sendCode()
                 }
             } label: {
-                if authManager.isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    Text("Send Code")
-                        .font(.system(size: 18, weight: .semibold))
+                HStack {
+                    Spacer()
+                    if authManager.isLoading {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    } else {
+                        Text("Send Code")
+                            .font(.system(size: 18, weight: .semibold))
+                    }
+                    Spacer()
                 }
+                .frame(height: 56)
+                .background(isValidEmail ? AppColors.positive : Color.gray)
+                .foregroundColor(.white)
+                .cornerRadius(12)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(phoneNumber.isEmpty ? Color.gray : AppColors.positive)
-            .foregroundColor(.white)
-            .cornerRadius(12)
-            .disabled(phoneNumber.isEmpty || authManager.isLoading)
-            
-            // Show warning if testing on simulator
-            #if targetEnvironment(simulator)
-            Text("⚠️ Phone Auth requires a real device. APNs doesn't work on simulator.")
-                .font(.system(size: 12))
-                .foregroundColor(.orange)
-                .multilineTextAlignment(.center)
-                .padding(.top, 8)
-            #endif
+            .buttonStyle(.plain)
+            .disabled(!isValidEmail || authManager.isLoading)
         }
     }
-    
+
     private var verificationCodeView: some View {
         VStack(spacing: 20) {
             Text("Enter verification code")
                 .font(.system(size: 24, weight: .bold))
                 .multilineTextAlignment(.center)
-            
-            Text("We sent a code to \(phoneNumber)")
+
+            Text("We sent a code to \(email)")
                 .font(.system(size: 16))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-            
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Verification Code")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.secondary)
-                
+
                 TextField("123456", text: $verificationCode)
                     .keyboardType(.numberPad)
                     .textContentType(.oneTimeCode)
@@ -134,43 +126,58 @@ struct PhoneAuthView: View {
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(12)
             }
-            
+
             Button {
                 Task {
                     await verifyCode()
                 }
             } label: {
-                if authManager.isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    Text("Verify")
-                        .font(.system(size: 18, weight: .semibold))
+                HStack {
+                    Spacer()
+                    if authManager.isLoading {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    } else {
+                        Text("Verify")
+                            .font(.system(size: 18, weight: .semibold))
+                    }
+                    Spacer()
                 }
+                .frame(height: 56)
+                .background(verificationCode.isEmpty ? Color.gray : AppColors.positive)
+                .foregroundColor(.white)
+                .cornerRadius(12)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(verificationCode.isEmpty ? Color.gray : AppColors.positive)
-            .foregroundColor(.white)
-            .cornerRadius(12)
+            .buttonStyle(.plain)
             .disabled(verificationCode.isEmpty || authManager.isLoading)
-            
+
             Button {
                 isVerificationStep = false
                 verificationCode = ""
             } label: {
-                Text("Change phone number")
+                Text("Change email address")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 24)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .padding(.top, 8)
         }
     }
-    
+
+    // MARK: - Helpers
+
+    private var isValidEmail: Bool {
+        let emailRegex = #"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"#
+        return email.range(of: emailRegex, options: .regularExpression) != nil
+    }
+
     private func sendCode() async {
-        isPhoneFocused = false
+        isEmailFocused = false
         do {
-            try await authManager.sendVerificationCode(to: phoneNumber)
+            try await authManager.sendVerificationCode(to: email)
             withAnimation {
                 isVerificationStep = true
             }
@@ -178,7 +185,7 @@ struct PhoneAuthView: View {
             // Error is handled by authManager and shown in alert
         }
     }
-    
+
     private func verifyCode() async {
         isCodeFocused = false
         do {
@@ -190,47 +197,47 @@ struct PhoneAuthView: View {
     }
 }
 
-#Preview("Phone Number Entry") {
-    PhoneAuthView()
-        .environmentObject(AuthManager())
+#Preview("Email Entry") {
+    EmailAuthView()
+        .environmentObject(SupabaseAuthManager())
 }
 
 #Preview("Verification Code Entry") {
     struct VerificationPreview: View {
-        @StateObject private var authManager = AuthManager()
-        @State private var phoneNumber = "+1234567890"
+        @StateObject private var authManager = SupabaseAuthManager()
+        @State private var email = "test@example.com"
         @State private var verificationCode = ""
         @State private var isVerificationStep = true
-        
+
         var body: some View {
             ZStack {
                 Color(UIColor.systemBackground)
                     .ignoresSafeArea()
-                
+
                 VStack(spacing: 24) {
                     Spacer()
-                    
+
                     Image("hoidma")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(height: 80)
                         .padding(.bottom, 20)
-                    
+
                     VStack(spacing: 20) {
                         Text("Enter verification code")
                             .font(.system(size: 24, weight: .bold))
                             .multilineTextAlignment(.center)
-                        
-                        Text("We sent a code to \(phoneNumber)")
+
+                        Text("We sent a code to \(email)")
                             .font(.system(size: 16))
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
-                        
+
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Verification Code")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(.secondary)
-                            
+
                             TextField("123456", text: $verificationCode)
                                 .keyboardType(.numberPad)
                                 .textContentType(.oneTimeCode)
@@ -239,36 +246,44 @@ struct PhoneAuthView: View {
                                 .background(Color(UIColor.secondarySystemBackground))
                                 .cornerRadius(12)
                         }
-                        
+
                         Button {
                             // Preview action
                         } label: {
-                            Text("Verify")
-                                .font(.system(size: 18, weight: .semibold))
+                            HStack {
+                                Spacer()
+                                Text("Verify")
+                                    .font(.system(size: 18, weight: .semibold))
+                                Spacer()
+                            }
+                            .frame(height: 56)
+                            .background(verificationCode.isEmpty ? Color.gray : AppColors.positive)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background(verificationCode.isEmpty ? Color.gray : AppColors.positive)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+                        .buttonStyle(.plain)
                         .disabled(verificationCode.isEmpty)
-                        
+
                         Button {
                             // Preview action
                         } label: {
-                            Text("Change phone number")
+                            Text("Change email address")
                                 .font(.system(size: 16))
                                 .foregroundColor(.secondary)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 24)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                         .padding(.top, 8)
                     }
-                    
+
                     Spacer()
                 }
                 .padding(.horizontal, 32)
             }
         }
     }
-    
+
     return VerificationPreview()
 }
