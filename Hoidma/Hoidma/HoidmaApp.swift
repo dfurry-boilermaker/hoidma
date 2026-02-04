@@ -307,16 +307,19 @@ struct HoidmaApp: App {
     private func dismissLoadingScreen() {
         guard isLoading || showLockScreen else { return }
 
-        AppLogger.debug("Dismissing loading screen")
+        AppLogger.debug("Dismissing loading screen after delay")
 
-        // Fade out the loading screen with smooth animation
-        withAnimation(.easeInOut(duration: 0.4)) {
-            loadingOpacity = 0.0
-        }
-        // Remove loading view after fade completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            isLoading = false
-            showLockScreen = false
+        // Wait 0.5s to ensure data is fully loaded and rendered
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Fade out the loading screen with smooth animation
+            withAnimation(.easeInOut(duration: 0.4)) {
+                loadingOpacity = 0.0
+            }
+            // Remove loading view after fade completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                isLoading = false
+                showLockScreen = false
+            }
         }
     }
 
