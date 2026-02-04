@@ -9,7 +9,9 @@ struct PortfolioView: View {
     @State private var selectedPeriod: TimePeriod = .daily
     @State private var stockToDelete: Stock? = nil
     @State private var showDeleteConfirmation: Bool = false
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isDarkMode: Bool { colorScheme == .dark }
     
     var periodReturn: (value: Double, percent: Double) {
         viewModel.totalReturnForPeriod(selectedPeriod)
@@ -54,73 +56,37 @@ struct PortfolioView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         // Portfolio summary card
-                        VStack(spacing: 12) {
-                            HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .lastTextBaseline, spacing: 8) {
                                 Text(viewModel.totalPortfolioValue, format: .currency(code: "USD"))
                                     .font(.system(size: 24, weight: .bold))
                                     .foregroundColor(Color.primary)
+                                Text("Total")
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color.secondary)
                                 Spacer()
                             }
-                            
-                            // Gains section with add button on the right
-                            HStack(alignment: .top, spacing: 0) {
-                                // Returns section - grouped together with consistent spacing
-                                VStack(spacing: 0) {
-                                    // Day gain display
-                                    HStack(spacing: 4) {
-                                        Text(dayReturn.value >= 0 ? "+" : "")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(AppColors.forValue(dayReturn.value))
-                                        Text(dayReturn.value, format: .currency(code: "USD"))
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(AppColors.forValue(dayReturn.value))
 
-                                        Text("(\(dayReturn.percent >= 0 ? "+" : "")\(String(format: "%.2f", dayReturn.percent))%)")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(AppColors.forValue(dayReturn.value))
+                            // Day gain display
+                            HStack(spacing: 4) {
+                                Text("\(dayReturn.value >= 0 ? "+" : "")\(dayReturn.value.formatted(.currency(code: "USD"))) (\(dayReturn.percent >= 0 ? "+" : "")\(String(format: "%.2f", dayReturn.percent))%)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(AppColors.forValue(dayReturn.value))
 
-                                        Text("1D")
-                                            .font(.system(size: 12, weight: .regular))
-                                            .foregroundColor(Color.secondary)
+                                Text("1D")
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color.secondary)
+                            }
 
-                                        Spacer()
-                                    }
+                            // Total gain display
+                            HStack(spacing: 4) {
+                                Text("\(totalReturn.value >= 0 ? "+" : "")\(totalReturn.value.formatted(.currency(code: "USD"))) (\(totalReturn.percent >= 0 ? "+" : "")\(String(format: "%.2f", totalReturn.percent))%)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(AppColors.forValue(totalReturn.value))
 
-                                    // Total gain display
-                                    HStack(spacing: 4) {
-                                        Text(totalReturn.value >= 0 ? "+" : "")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(AppColors.forValue(totalReturn.value))
-                                        Text(totalReturn.value, format: .currency(code: "USD"))
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(AppColors.forValue(totalReturn.value))
-
-                                        Text("(\(totalReturn.percent >= 0 ? "+" : "")\(String(format: "%.2f", totalReturn.percent))%)")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(AppColors.forValue(totalReturn.value))
-                                        
-                                        Text("All")
-                                            .font(.system(size: 12, weight: .regular))
-                                            .foregroundColor(Color.secondary)
-                                        
-                                        Spacer()
-                                    }
-                                    .padding(.top, 2)
-                                }
-                                
-                                Spacer()
-                                
-                                // Add button - same height as both return lines combined
-                                if sortedStocks.count > 0 {
-                                    Button {
-                                        showingCommitForm = true
-                                    } label: {
-                                        Image(isDarkMode ? "add.button.dark" : "add.button")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 65, height: 40)
-                                    }
-                                }
+                                Text("All")
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color.secondary)
                             }
                         }
                         .padding(.horizontal, 20)
@@ -147,7 +113,7 @@ struct PortfolioView: View {
                                                     let portfolioPercentage = min((stockValue / viewModel.totalPortfolioValue), 1.0)
 
                                                     if portfolioPercentage > 0 {
-                                                        RoundedRectangle(cornerRadius: 6)
+                                                        Rectangle()
                                                             .fill(colorForTicker(stock.ticker))
                                                             .frame(width: max(geometry.size.width * portfolioPercentage, 0), height: 3)
                                                     }
@@ -155,7 +121,7 @@ struct PortfolioView: View {
                                             }
                                         }
                                         .frame(maxWidth: geometry.size.width, alignment: .leading)
-                                        .clipped()
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
                                     }
                                 }
                             }
@@ -164,23 +130,12 @@ struct PortfolioView: View {
                         .padding(.horizontal, 20)
                         .padding(.bottom, 10)
 
-                        // Add stock button and message - only show if there are no positions with shares
+                        // Empty state message - only show if there are no positions with shares
                         if sortedStocks.count == 0 {
-                            VStack() {
-                                Text("Add positions below")
-                                    .font(.system(size: 16, weight: .regular))
-                                    .foregroundColor(Color.secondary)
-                                
-                                Button {
-                                    showingCommitForm = true
-                                } label: {
-                                    Image(isDarkMode ? "add.button.dark" : "add.button")
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 90, height: 90)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
+                            Text("Tap add in the top right to add positions")
+                                .font(.system(size: 16, weight: .regular))
+                                .foregroundColor(Color.secondary)
+                                .frame(maxWidth: .infinity)
                         }
                         
                         // Stock positions list

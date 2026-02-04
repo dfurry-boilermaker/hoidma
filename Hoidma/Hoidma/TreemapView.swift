@@ -4,17 +4,20 @@ import SwiftUI
 
 struct TreemapView: View {
     let accounts: [String]
-    let sharedData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)]
+    let sharedData: [(ticker: String, accounts: [String], totalValue: Double, accountValues: [String: Double], color: Color)]
     let accountValues: [String: Double]
     let showDollarAmounts: Bool
     var onAccountTap: ((String) -> Void)? = nil
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
 
-    /// Get stocks for a specific account with their values
+    /// Get stocks for a specific account with their actual values in that account
     private func stocksForAccount(_ account: String) -> [(ticker: String, value: Double, color: Color)] {
         sharedData
             .filter { $0.accounts.contains(account) }
-            .map { (ticker: $0.ticker, value: $0.totalValue / Double($0.accounts.count), color: $0.color) }
+            .compactMap { item -> (ticker: String, value: Double, color: Color)? in
+                // Use the actual value for this account from accountValues
+                guard let valueInAccount = item.accountValues[account], valueInAccount > 0 else { return nil }
+                return (ticker: item.ticker, value: valueInAccount, color: item.color)
+            }
             .sorted { $0.value > $1.value }
     }
 
@@ -67,10 +70,6 @@ struct TreemapView: View {
                         }
                     }
                     .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.gray.opacity(0.08))
-                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.gray.opacity(0.3), lineWidth: 1)
@@ -134,18 +133,18 @@ struct AccountTreemapRow: View {
 
 #Preview("Treemap View") {
     let mockAccounts = ["401k", "Roth IRA", "Indv"]
-    let mockData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)] = [
-        ("AAPL", ["401k", "Indv"], 15000, .blue),
-        ("GOOGL", ["Roth IRA"], 12000, .green),
-        ("MSFT", ["401k", "Roth IRA"], 18000, .purple),
-        ("AMZN", ["Indv"], 8000, .orange),
-        ("TSLA", ["401k"], 6000, .red),
-        ("NVDA", ["Roth IRA", "Indv"], 20000, .cyan),
+    let mockData: [(ticker: String, accounts: [String], totalValue: Double, accountValues: [String: Double], color: Color)] = [
+        ("AAPL", ["401k", "Indv"], 15000, ["401k": 9000, "Indv": 6000], .blue),
+        ("GOOGL", ["Roth IRA"], 12000, ["Roth IRA": 12000], .green),
+        ("MSFT", ["401k", "Roth IRA"], 18000, ["401k": 10000, "Roth IRA": 8000], .purple),
+        ("AMZN", ["Indv"], 8000, ["Indv": 8000], .orange),
+        ("TSLA", ["401k"], 6000, ["401k": 6000], .red),
+        ("NVDA", ["Roth IRA", "Indv"], 20000, ["Roth IRA": 10000, "Indv": 10000], .cyan),
     ]
     let mockAccountValues: [String: Double] = [
         "401k": 25000,
         "Roth IRA": 30000,
-        "Indv": 23000
+        "Indv": 24000
     ]
 
     return ScrollView {

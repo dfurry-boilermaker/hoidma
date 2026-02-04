@@ -10,19 +10,22 @@ struct StockDetailView: View {
     @State private var showingAddLotForm: Bool = false
     @State private var selectedLotForSell: StockLot? = nil
     @State private var selectedLotForAdd: StockLot? = nil
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var systemColorScheme
     @AppStorage("selectedTab") private var selectedTab: Int = 1
+    @AppStorage("appearanceMode") private var appearanceMode: Int = AppearanceMode.auto.rawValue
 
-    // Get the current stock from view model to reflect updates - cached to avoid repeated lookups
-    @State private var cachedStock: Stock?
-
-    private var currentStock: Stock {
-        if let cached = cachedStock {
-            return cached
+    private var isDarkMode: Bool {
+        let mode = AppearanceMode(rawValue: appearanceMode) ?? .auto
+        switch mode {
+        case .light: return false
+        case .dark: return true
+        case .auto: return systemColorScheme == .dark
         }
-        let found = viewModel.stocks.first(where: { $0.ticker == stock.ticker }) ?? stock
-        cachedStock = found
-        return found
+    }
+
+    // Get the current stock from view model to reflect updates
+    private var currentStock: Stock {
+        viewModel.stocks.first(where: { $0.ticker == stock.ticker }) ?? stock
     }
 
     var body: some View {
@@ -33,22 +36,56 @@ struct StockDetailView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 4) {
-                        // Header with back button
-                        HStack {
-                            Button {
-                                dismiss()
-                            } label: {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(Color.primary)
+                        // Standard header matching main page
+                        ZStack(alignment: .center) {
+                            // Back button on left
+                            HStack {
+                                Button {
+                                    dismiss()
+                                } label: {
+                                    Image(isDarkMode ? "back.button.dark" : "back.button")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 12, height: 12)
+                                }
+                                .padding(.leading, 20)
+
+                                Spacer()
                             }
-                            
-                            Spacer()
+
+                            // Dave folly logo centered
+                            Button {
+                                withAnimation {
+                                    // Toggle between light and dark only (auto is set in profile)
+                                    if isDarkMode {
+                                        appearanceMode = AppearanceMode.light.rawValue
+                                    } else {
+                                        appearanceMode = AppearanceMode.dark.rawValue
+                                    }
+                                }
+                            } label: {
+                                Image(isDarkMode ? "dave.folly.logo.dark" : "dave.folly.logo")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(height: 50)
+                            }
+
+                            // Add button at top-right
+                            HStack {
+                                Spacer()
+                                Button {
+                                    showingAddLotForm = true
+                                } label: {
+                                    Image(isDarkMode ? "add.button.dark" : "add.button")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 70, height: 43)
+                                }
+                                .padding(.trailing, 16)
+                            }
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 2)
-                        .padding(.bottom, 20)
-                        
+                        .padding(.bottom, 8)
+
                         // Company name and ticker
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -94,11 +131,18 @@ struct StockDetailView: View {
 
                                     let totalValue = priceData.currentPrice * Double(totalShares)
                                     DetailRow(label: "Total Value", value: totalValue.formatted(.currency(code: "USD")))
-                                    
+
+                                    // 1D Profit/Loss
+                                    let dailyChangePercent = priceData.apiPeriodChanges["1d"] ?? 0
+                                    let dailyProfitLoss = totalValue * (dailyChangePercent / (100 + dailyChangePercent))
+                                    let dailyProfitLossString = "\(dailyProfitLoss >= 0 ? "+" : "")\(dailyProfitLoss.formatted(.currency(code: "USD"))) (\(dailyChangePercent >= 0 ? "+" : "")\(String(format: "%.2f", dailyChangePercent))%)"
+                                    DetailRow(label: "1D Gain/Loss", value: dailyProfitLossString, isProfitLoss: true)
+
+                                    // All Time Profit/Loss
                                     let totalProfitLoss = totalValue - totalCostFromLots
                                     let profitLossPercent = totalCostFromLots > 0 ? (totalProfitLoss / totalCostFromLots) * 100 : 0
                                     let profitLossString = "\(totalProfitLoss >= 0 ? "+" : "")\(totalProfitLoss.formatted(.currency(code: "USD"))) (\(profitLossPercent >= 0 ? "+" : "")\(String(format: "%.2f", profitLossPercent))%)"
-                                    DetailRow(label: "Profit/Loss", value: profitLossString, isProfitLoss: true)
+                                    DetailRow(label: "All Time Gain/Loss", value: profitLossString, isProfitLoss: true)
                                 }
                             }
                         }
@@ -123,7 +167,7 @@ struct StockDetailView: View {
                                         // Background bar with neutral outline
                                         RoundedRectangle(cornerRadius: 6)
                                             .fill(Color.clear)
-                                            .frame(height: 6)
+                                            .frame(height: 3)
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 6)
                                                     .stroke(Color.gray.opacity(0.3), lineWidth: 1)
@@ -132,10 +176,10 @@ struct StockDetailView: View {
                                         // Filled bar
                                         RoundedRectangle(cornerRadius: 6)
                                             .fill(colorForTicker(currentStock.ticker))
-                                            .frame(width: max(geometry.size.width * min(portfolioPercentage / 100, 1.0), 0), height: 6)
+                                            .frame(width: max(geometry.size.width * min(portfolioPercentage / 100, 1.0), 0), height: 3)
                                     }
                                 }
-                                .frame(height: 6)
+                                .frame(height: 3)
                             }
                             .padding(.vertical, 8)
                             .padding(.horizontal, 20)
@@ -147,18 +191,9 @@ struct StockDetailView: View {
                                 Text("Lots by Account")
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(Color.primary)
-                                
+
                                 Spacer()
-                                
-                                Button {
-                                    showingAddLotForm = true
-                                } label: {
-                                    Image(isDarkMode ? "add.button.dark" : "add.button")
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 60, height: 60)
-                                }
-                            } //.padding(.top, -8)
+                            }
                             
                             if currentStock.lots.isEmpty {
                                 VStack(spacing: 4) {
@@ -235,17 +270,10 @@ struct StockDetailView: View {
         )
         .navigationBarBackButtonHidden(true)
         .onAppear {
-            // Refresh cached stock
-            cachedStock = viewModel.stocks.first(where: { $0.ticker == stock.ticker }) ?? stock
-            
             // Ensure price is initialized
             if viewModel.stockPrices[currentStock.ticker] == nil {
                 viewModel.updatePrice(for: currentStock)
             }
-        }
-        .onChange(of: viewModel.stocks) {
-            // Refresh cached stock when stocks change
-            cachedStock = viewModel.stocks.first(where: { $0.ticker == stock.ticker }) ?? stock
         }
     }
 }
@@ -305,7 +333,8 @@ struct LotRow: View {
     let currentPrice: Double
     let onSell: (StockLot) -> Void
     let onAddShares: (StockLot) -> Void
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDarkMode: Bool { colorScheme == .dark }
     
     var body: some View {
         VStack(spacing: 4) {
@@ -435,7 +464,8 @@ struct AddLotFormView: View {
     let stock: Stock
     @ObservedObject var viewModel: StockViewModel
     @Binding var isPresented: Bool
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDarkMode: Bool { colorScheme == .dark }
 
     @State private var accountNameInput: String = ""
     @State private var priceInput: String = ""
@@ -624,7 +654,8 @@ struct SellLotFormView: View {
     let stock: Stock
     @ObservedObject var viewModel: StockViewModel
     @Binding var selectedLot: StockLot?
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDarkMode: Bool { colorScheme == .dark }
     
     @State private var sharesToSellInput: String = ""
     @State private var commitError: String? = nil
@@ -716,20 +747,39 @@ struct SellLotFormView: View {
                         )
                 }
                 
-                // Sell button below input
-                Button {
-                    attemptSell()
-                } label: {
-                    Image(isDarkMode ? "sell.dark" : "sell")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 20)
-                        .padding(.vertical, 6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.red, lineWidth: 1)
-                        )
+                // Sell buttons - two side by side
+                HStack(spacing: 12) {
+                    // Sell button (partial sell)
+                    Button {
+                        attemptSell()
+                    } label: {
+                        Image(isDarkMode ? "sell.dark" : "sell")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 15)
+                            .padding(.vertical, 6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.red, lineWidth: 1)
+                            )
+                    }
+
+                    // Sell All button
+                    Button {
+                        attemptSellAll()
+                    } label: {
+                        Image(isDarkMode ? "sell.all.dark" : "sell.all")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 15)
+                            .padding(.vertical, 6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.red, lineWidth: 1)
+                            )
+                    }
                 }
                 .padding(.top, 4)
             }
@@ -751,13 +801,19 @@ struct SellLotFormView: View {
             commitError = "Please enter a valid number of shares to sell."
             return
         }
-        
+
         guard sharesToSell <= lot.shares else {
             commitError = "Cannot sell more shares than available (\(String(format: "%.4f", lot.shares)))."
             return
         }
-        
+
         viewModel.sellLot(ticker: stock.ticker, lotId: lot.id, sharesToSell: sharesToSell)
+        selectedLot = nil
+    }
+
+    private func attemptSellAll() {
+        // Sell all shares in this lot
+        viewModel.sellLot(ticker: stock.ticker, lotId: lot.id, sharesToSell: lot.shares)
         selectedLot = nil
     }
 }
@@ -767,7 +823,8 @@ struct AddSharesToLotFormView: View {
     let stock: Stock
     @ObservedObject var viewModel: StockViewModel
     @Binding var selectedLot: StockLot?
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDarkMode: Bool { colorScheme == .dark }
     
     @State private var sharesToAddInput: String = ""
     @State private var purchasePriceInput: String = ""
@@ -896,7 +953,7 @@ struct AddSharesToLotFormView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 20)
+                        .frame(height: 15)
                         .padding(.vertical, 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)

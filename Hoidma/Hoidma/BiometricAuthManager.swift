@@ -5,9 +5,10 @@ import Combine
 
 /// Manages biometric authentication (Face ID / Touch ID)
 class BiometricAuthManager: ObservableObject {
-    @Published var isUnlocked: Bool = true  // Start unlocked, lock when app goes to background
+    @Published var isUnlocked: Bool = false  // Start locked, require authentication on launch
     @Published var isAuthenticating: Bool = false
     @Published var authError: String? = nil
+    @Published var hasAttemptedAuth: Bool = false  // Track if we've tried to authenticate
 
     /// Whether biometric authentication is enabled by user preference
     @AppStorage("biometricAuthEnabled") var biometricAuthEnabled: Bool = true
@@ -50,21 +51,20 @@ class BiometricAuthManager: ObservableObject {
         let context = LAContext()
         var error: NSError?
 
-        // Check if biometric authentication is available
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            // Biometrics not available, allow access
-            DispatchQueue.main.async {
-                self.isUnlocked = true
-                self.authError = nil
-            }
-            return
-        }
+        hasAttemptedAuth = true
 
-        // Check if user has disabled biometric auth
+        // Check if user has disabled biometric auth - unlock immediately
         guard biometricAuthEnabled else {
             DispatchQueue.main.async {
                 self.isUnlocked = true
             }
+            return
+        }
+
+        // Check if biometric authentication is available
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            // Biometrics not available - try device passcode instead
+            authenticateWithPasscode()
             return
         }
 
@@ -87,13 +87,17 @@ class BiometricAuthManager: ObservableObject {
                         case .userCancel:
                             self.authError = "Authentication cancelled"
                         case .userFallback:
-                            // User chose to enter password - allow access
-                            self.isUnlocked = true
+                            // SECURITY FIX: User chose fallback - try device passcode authentication
+                            // Don't auto-unlock; instead attempt passcode auth
+                            self.authenticateWithPasscode()
                         case .biometryNotEnrolled:
-                            self.authError = "\(self.biometricTypeName) is not set up"
-                            self.isUnlocked = true // Allow access if not enrolled
+                            // SECURITY FIX: Don't auto-unlock when biometrics not set up
+                            // Require passcode authentication instead
+                            self.authError = "\(self.biometricTypeName) is not set up. Using passcode."
+                            self.authenticateWithPasscode()
                         case .biometryLockout:
                             self.authError = "\(self.biometricTypeName) is locked. Use passcode."
+                            self.authenticateWithPasscode()
                         default:
                             self.authError = "Authentication failed"
                         }
@@ -103,11 +107,30 @@ class BiometricAuthManager: ObservableObject {
         }
     }
 
+    /// SECURITY FIX: Authenticate using device passcode when biometrics unavailable
+    private func authenticateWithPasscode() {
+        let context = LAContext()
+
+        // Use deviceOwnerAuthentication which allows passcode fallback
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Hoidma to access your portfolio") { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    self.isUnlocked = true
+                    self.authError = nil
+                } else {
+                    self.isUnlocked = false
+                    self.authError = "Authentication required"
+                }
+            }
+        }
+    }
+
     /// Lock the app (require re-authentication)
     func lock() {
-        if biometricAuthEnabled && canUseBiometrics {
+        if biometricAuthEnabled {
             isUnlocked = false
             authError = nil
+            hasAttemptedAuth = false
         }
     }
 
@@ -116,5 +139,11 @@ class BiometricAuthManager: ObservableObject {
         isUnlocked = false
         isAuthenticating = false
         authError = nil
+        hasAttemptedAuth = false
+    }
+
+    /// Check if authentication should be required
+    var requiresAuthentication: Bool {
+        return biometricAuthEnabled && !isUnlocked
     }
 }

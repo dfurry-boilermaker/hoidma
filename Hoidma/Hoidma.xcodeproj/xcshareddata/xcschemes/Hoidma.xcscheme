@@ -54,6 +54,18 @@
             ReferencedContainer = "container:Hoidma.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "POLYGON_API_KEY"
+            value = "Ds3t3cHooEShvcG3nqYXmBTDBrLauU68"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "FMP_API_KEY"
+            value = "Qadn9INnY2R9FEuFi5PwYRm7cwPp7Zwt"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

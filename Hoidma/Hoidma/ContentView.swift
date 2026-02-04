@@ -4,17 +4,19 @@ import Combine
 
 enum NavigationDestination: Hashable {
     case stockDetail(Stock)
+    case accountDetail(AccountSummary)
 }
 
 struct ContentView: View {
-    @StateObject private var viewModel = StockViewModel()
+    @ObservedObject var viewModel: StockViewModel
     @EnvironmentObject var authManager: SupabaseAuthManager
     @EnvironmentObject var biometricAuth: BiometricAuthManager
     @State private var showingCommitForm = false
     @State private var showingModal = false
     @State private var selectedTicker: String? = nil
     @State private var navigationPath = NavigationPath()
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @AppStorage("appearanceMode") private var appearanceMode: Int = AppearanceMode.auto.rawValue
+    @Environment(\.colorScheme) private var systemColorScheme
     @AppStorage("selectedTab") private var selectedTab: Int = 1
     @State private var previousTab: Int = 1
     @State private var slideDirection: SlideDirection = .none
@@ -22,10 +24,37 @@ struct ContentView: View {
     @State private var initialScrollOffset: CGFloat? = nil
     @State private var showSignOutAlert = false
     @State private var selectedAccountName: String? = nil
+    @State private var showDollarAmounts: Bool = false
     private let scrollThreshold: CGFloat = 50
 
     enum SlideDirection {
         case none, left, right
+    }
+
+    // Computed property for effective dark mode based on appearance setting
+    private var isDarkMode: Bool {
+        let mode = AppearanceMode(rawValue: appearanceMode) ?? .auto
+        switch mode {
+        case .light:
+            return false
+        case .dark:
+            return true
+        case .auto:
+            return systemColorScheme == .dark
+        }
+    }
+
+    // Color scheme for preferredColorScheme modifier (nil for auto to use system)
+    private var preferredScheme: ColorScheme? {
+        let mode = AppearanceMode(rawValue: appearanceMode) ?? .auto
+        switch mode {
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        case .auto:
+            return nil
+        }
     }
 
     var body: some View {
@@ -36,6 +65,7 @@ struct ContentView: View {
 
                 VStack(spacing: 0) {
                     // Tab content with slide transitions
+                    // Tab order: Portfolio (1), Visuals (2), Charts (3), Accounts (4), Profile (5)
                     ZStack {
                         if selectedTab == 1 {
                             PortfolioTabContent(
@@ -53,12 +83,22 @@ struct ContentView: View {
                         }
 
                         if selectedTab == 2 {
-                            PortfolioVisualizationsView(viewModel: viewModel, selectedTab: $selectedTab, selectedAccountName: $selectedAccountName)
+                            PortfolioVisualizationsView(viewModel: viewModel, selectedTab: $selectedTab, selectedAccountName: $selectedAccountName, showDollarAmounts: $showDollarAmounts, navigationPath: $navigationPath)
                                 .transition(slideTransition)
                         }
 
                         if selectedTab == 3 {
+                            ChartsView(viewModel: viewModel, selectedTab: $selectedTab, showDollarAmounts: $showDollarAmounts)
+                                .transition(slideTransition)
+                        }
+
+                        if selectedTab == 4 {
                             AccountsView(viewModel: viewModel, selectedTab: $selectedTab, navigationPath: $navigationPath, selectedAccountName: $selectedAccountName)
+                                .transition(slideTransition)
+                        }
+
+                        if selectedTab == 5 {
+                            ProfileView(selectedTab: $selectedTab)
                                 .transition(slideTransition)
                         }
                     }
@@ -74,69 +114,89 @@ struct ContentView: View {
                     }
                 }
 
-                // Fixed header (only show on tab 1)
-                if selectedTab == 1 {
-                    VStack(spacing: 0) {
-                        ZStack(alignment: .top) {
-                            Color(UIColor.systemBackground)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 120)
-                                .ignoresSafeArea(edges: .top)
+                // Fixed header (show on all tabs)
+                VStack(spacing: 0) {
+                    ZStack(alignment: .top) {
+                        // Solid background
+                        Color(UIColor.systemBackground)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 120)
+                            .ignoresSafeArea(edges: .top)
 
-                            HStack {
-                                Image(isDarkMode ? "hoidma.dark" : "hoidma")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 50)
-                                    .cornerRadius(8)
-                                    .padding(.leading, 16)
-                                    .onLongPressGesture {
-                                        showSignOutAlert = true
-                                    }
-
-                                Spacer()
-                            }
-
-                            Button {
-                                withAnimation {
-                                    isDarkMode.toggle()
+                        HStack {
+                            Image(isDarkMode ? "hoidma.dark" : "hoidma")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 100, height: 50)
+                                .cornerRadius(8)
+                                .padding(.leading, 16)
+                                .onLongPressGesture {
+                                    showSignOutAlert = true
                                 }
-                            } label: {
-                                Image(isDarkMode ? "dave.folly.logo.dark" : "dave.folly.logo")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(height: 50)
-                            }
+
+                            Spacer()
                         }
 
-                        Spacer()
+                        Button {
+                            withAnimation {
+                                // Toggle between light and dark only (auto is set in profile)
+                                if isDarkMode {
+                                    appearanceMode = AppearanceMode.light.rawValue
+                                } else {
+                                    appearanceMode = AppearanceMode.dark.rawValue
+                                }
+                            }
+                        } label: {
+                            Image(isDarkMode ? "dave.folly.logo.dark" : "dave.folly.logo")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(height: 50)
+                        }
                     }
 
-                    // Add button at top-right
+                    Spacer()
+                }
+
+                // Add button at top-right (on tab 1 and tab 4 - Portfolio and Accounts)
+                if selectedTab == 1 || selectedTab == 4 {
                     VStack {
                         HStack {
                             Spacer()
 
-                            let hasStocks = viewModel.stocks.filter { $0.isMaritalStatus }.contains { stock in
-                                let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
-                                return totalShares > 0
+                            Button {
+                                showingCommitForm = true
+                            } label: {
+                                Image(isDarkMode ? "add.button.dark" : "add.button")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 70, height: 43)
                             }
-
-                            if showScrollButton && hasStocks {
-                                Button {
-                                    showingCommitForm = true
-                                } label: {
-                                    Image(isDarkMode ? "add.button.dark" : "add.button")
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 55, height: 34)
-                                }
-                                .padding(.trailing, 16)
-                                .padding(.top, 12)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
+                            .padding(.trailing, 16)
+                            .padding(.top, 4)
                         }
 
+                        Spacer()
+                    }
+                }
+
+                // Dollar/percentage toggle at top-right (on tabs 2 and 3)
+                if (selectedTab == 2 || selectedTab == 3) && viewModel.totalPortfolioValue > 0 {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button {
+                                withAnimation {
+                                    showDollarAmounts.toggle()
+                                }
+                            } label: {
+                                Image(isDarkMode ? (showDollarAmounts ? "dollar.dark" : "percentage.dark") : (showDollarAmounts ? "dollar" : "percentage"))
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 24, height: 24)
+                            }
+                            .padding(.trailing, 16)
+                            .padding(.top, 14)
+                        }
                         Spacer()
                     }
                 }
@@ -147,13 +207,20 @@ struct ContentView: View {
                 }
             }
             .navigationBarHidden(true)
-            .preferredColorScheme(isDarkMode ? .dark : .light)
+            .preferredColorScheme(preferredScheme)
             .navigationDestination(for: NavigationDestination.self) { destination in
                 switch destination {
                 case .stockDetail(let stock):
                     StockDetailView(
                         stock: stock,
                         priceData: viewModel.stockPrices[stock.ticker],
+                        viewModel: viewModel,
+                        navigationPath: $navigationPath
+                    )
+                case .accountDetail(let account):
+                    AccountDetailView(
+                        account: account,
+                        totalAllAccounts: viewModel.totalPortfolioValue,
                         viewModel: viewModel,
                         navigationPath: $navigationPath
                     )
@@ -175,7 +242,7 @@ struct ContentView: View {
                         do {
                             try await authManager.signOut()
                         } catch {
-                            print("Error signing out: \(error.localizedDescription)")
+                            AppLogger.error("Error signing out: \(error.localizedDescription)")
                         }
                     }
                 }
@@ -453,23 +520,11 @@ struct PreviewContent: View {
     @StateObject private var mockViewModel = MockStockViewModel()
     @StateObject private var mockAuthManager = MockAuthManager()
     @StateObject private var mockBiometricAuth = BiometricAuthManager()
-    @State private var showingModal = false
-    @State private var showingCommitForm = false
-    @State private var selectedTicker: String? = nil
-    @State private var navigationPath = NavigationPath()
 
     var body: some View {
-        NavigationStack {
-            PortfolioView(
-                viewModel: mockViewModel,
-                showingModal: $showingModal,
-                showingCommitForm: $showingCommitForm,
-                selectedTicker: $selectedTicker,
-                navigationPath: $navigationPath
-            )
-        }
-        .environmentObject(mockAuthManager)
-        .environmentObject(mockBiometricAuth)
+        ContentView(viewModel: mockViewModel)
+            .environmentObject(mockAuthManager)
+            .environmentObject(mockBiometricAuth)
     }
 }
 
@@ -481,8 +536,10 @@ struct PortfolioViewPreviewContent: View {
     @Binding var selectedTicker: String?
     @Binding var navigationPath: NavigationPath
     @State private var selectedPeriod: TimePeriod = .daily
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
-    
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isDarkMode: Bool { colorScheme == .dark }
+
     var periodReturn: (value: Double, percent: Double) {
         viewModel.totalReturnForPeriod(selectedPeriod)
     }

@@ -25,9 +25,9 @@ enum AppEnvironment {
         if let envValue = ProcessInfo.processInfo.environment["USE_SUPABASE"] {
             return envValue != "1"
         }
-        // Default to local storage for development/testing
-        // Change to `false` for production builds with Supabase
-        return true
+        // Default to Supabase cloud storage for production
+        // Set USE_SUPABASE=0 in environment for local-only mode
+        return false
     }
 
     // MARK: - Debug Helpers

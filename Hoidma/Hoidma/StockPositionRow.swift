@@ -6,39 +6,57 @@ struct StockPositionRow: View {
     let totalPortfolioValue: Double
     let selectedPeriod: TimePeriod
     let onRemove: () -> Void
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
-    
+    var forAccountName: String? = nil // Optional filter for specific account
+
+    // Get shares for this context (filtered by account if specified)
+    private var relevantShares: Double {
+        if let accountName = forAccountName {
+            // Only count shares from lots in this specific account
+            return stock.lots.filter { $0.accountName == accountName }.reduce(0.0) { $0 + $1.shares }
+        } else {
+            // All shares across all accounts
+            return stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
+        }
+    }
+
+    // Get cost basis for this context (filtered by account if specified)
+    private var relevantCostBasis: Double {
+        if let accountName = forAccountName {
+            return stock.lots.filter { $0.accountName == accountName }.reduce(0.0) { $0 + $1.totalCost }
+        } else {
+            return stock.lots.isEmpty ? stock.totalCost : stock.lots.reduce(0.0) { $0 + $1.totalCost }
+        }
+    }
+
     // Calculate the stock value in dollars
     var stockValue: Double {
         guard let priceData = priceData else { return 0 }
-        let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
-        return priceData.currentPrice * totalShares
+        return priceData.currentPrice * relevantShares
     }
-    
+
     // Calculate the percentage of portfolio this stock represents
     var portfolioPercentage: Double {
         guard totalPortfolioValue > 0 else { return 0 }
         return (stockValue / totalPortfolioValue) * 100
     }
-    
+
     // Calculate daily return
     var dailyReturn: (value: Double, percent: Double) {
         guard let priceData = priceData else { return (0, 0) }
         let returnData = priceData.returnForPeriod(.daily)
         // Calculate dollar value based on shares
-        let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
-        let dollarValue = returnData.value * totalShares
+        let dollarValue = returnData.value * relevantShares
         return (dollarValue, returnData.percent)
     }
-    
-    // Calculate all-time return
+
+    // Calculate all-time return based on cost basis
     var allTimeReturn: (value: Double, percent: Double) {
         guard let priceData = priceData else { return (0, 0) }
-        let returnData = priceData.returnForPeriod(.allTime)
-        // Calculate dollar value based on shares
-        let totalShares = stock.lots.isEmpty ? Double(stock.shares) : stock.lots.reduce(0.0) { $0 + $1.shares }
-        let dollarValue = returnData.value * totalShares
-        return (dollarValue, returnData.percent)
+        let currentValue = priceData.currentPrice * relevantShares
+        let costBasis = relevantCostBasis
+        let dollarValue = currentValue - costBasis
+        let percent = costBasis > 0 ? (dollarValue / costBasis) * 100 : 0
+        return (dollarValue, percent)
     }
     
     var body: some View {
@@ -66,8 +84,11 @@ struct StockPositionRow: View {
                     Text(stock.ticker)
                         .font(.hoidmaMono(size: 10))
                         .foregroundColor(Color.secondary)
-                    
-                    Text("\(stock.shares) shares")
+
+                    let sharesText = relevantShares.truncatingRemainder(dividingBy: 1) == 0
+                        ? "\(Int(relevantShares)) shares"
+                        : "\(String(format: "%.4f", relevantShares)) shares"
+                    Text(sharesText)
                         .font(.system(size: 10, weight: .regular))
                         .foregroundColor(Color.secondary)
                 }

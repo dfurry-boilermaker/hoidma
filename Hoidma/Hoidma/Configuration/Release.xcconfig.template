@@ -1,0 +1,25 @@
+// Release.xcconfig.template
+//
+// SETUP INSTRUCTIONS:
+// 1. Copy this file to Release.xcconfig (remove .template extension)
+// 2. Replace placeholder values with your production API keys
+// 3. Release.xcconfig is gitignored - your keys stay local
+//
+// FOR CI/CD:
+// In your build pipeline, either:
+// - Create Release.xcconfig from secrets before build
+// - Use: xcodebuild POLYGON_API_KEY=xxx FMP_API_KEY=xxx
+//
+// =============================================================================
+
+// Polygon.io API Key (Recommend Starter tier $29/mo for production)
+// Sign up at: https://polygon.io/
+POLYGON_API_KEY = REPLACE_WITH_YOUR_PRODUCTION_POLYGON_API_KEY
+
+// Financial Modeling Prep API Key
+// Sign up at: https://financialmodelingprep.com/
+FMP_API_KEY = REPLACE_WITH_YOUR_PRODUCTION_FMP_API_KEY
+
+// Build Settings - These inject the keys into Info.plist at build time
+INFOPLIST_KEY_POLYGON_API_KEY = $(POLYGON_API_KEY)
+INFOPLIST_KEY_FMP_API_KEY = $(FMP_API_KEY)

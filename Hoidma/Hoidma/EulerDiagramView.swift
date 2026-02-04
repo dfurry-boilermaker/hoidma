@@ -7,7 +7,6 @@ struct EulerDiagramView: View {
     let sharedData: [(ticker: String, accounts: [String], totalValue: Double, color: Color)]
     let accountValues: [String: Double]
     let showDollarAmounts: Bool
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
     
     // MARK: - Computed Properties
     

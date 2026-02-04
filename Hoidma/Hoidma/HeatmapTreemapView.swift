@@ -5,25 +5,34 @@ import SwiftUI
 
 struct HeatmapTreemapView: View {
     let data: [(ticker: String, value: Double, changePercent: Double)]
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    let showDollarAmounts: Bool
 
-    /// Color based on performance percentage
+    /// Color based on performance percentage using a diverging scale centered at 0
+    /// Scale: ≤-3% (vibrant red) to 0% (white) to ≥+3% (vibrant green)
     private func colorForChange(_ changePercent: Double) -> Color {
-        if changePercent >= 0 {
-            // Green shades for gains
-            let intensity = min(abs(changePercent) / 10.0, 1.0) // Cap at 10%
+        // Clamp intensity to ±3% range
+        let intensity = min(abs(changePercent) / 3.0, 1.0)
+
+        if abs(changePercent) < 0.01 {
+            // Very close to 0% - neutral white/light gray
+            return Color(red: 0.96, green: 0.96, blue: 0.96)
+        } else if changePercent > 0 {
+            // Positive: white to vibrant green gradient
+            // At 0%: white (0.96, 0.96, 0.96)
+            // At +3%: vibrant green (0.10, 0.72, 0.25)
             return Color(
-                red: 0.15 + (0.1 * (1 - intensity)),
-                green: 0.55 + (0.2 * intensity),
-                blue: 0.35 + (0.1 * (1 - intensity))
+                red: 0.96 - (0.86 * intensity),
+                green: 0.96 - (0.24 * intensity),
+                blue: 0.96 - (0.71 * intensity)
             )
         } else {
-            // Red/coral shades for losses (like the image)
-            let intensity = min(abs(changePercent) / 10.0, 1.0) // Cap at 10%
+            // Negative: white to vibrant red gradient
+            // At 0%: white (0.96, 0.96, 0.96)
+            // At -3%: vibrant red (0.92, 0.15, 0.15)
             return Color(
-                red: 0.85 + (0.1 * intensity),
-                green: 0.45 - (0.15 * intensity),
-                blue: 0.45 - (0.15 * intensity)
+                red: 0.96 - (0.04 * intensity),
+                green: 0.96 - (0.81 * intensity),
+                blue: 0.96 - (0.81 * intensity)
             )
         }
     }
@@ -38,7 +47,8 @@ struct HeatmapTreemapView: View {
                     items: sortedData,
                     totalValue: totalValue,
                     rect: CGRect(x: 0, y: 0, width: geometry.size.width, height: geometry.size.height),
-                    colorForChange: colorForChange
+                    colorForChange: colorForChange,
+                    showDollarAmounts: showDollarAmounts
                 )
             }
         }
@@ -54,6 +64,7 @@ struct TreemapLayout: View {
     let totalValue: Double
     let rect: CGRect
     let colorForChange: (Double) -> Color
+    let showDollarAmounts: Bool
 
     var body: some View {
         let rects = calculateTreemapRects(items: items, totalValue: totalValue, rect: rect)
@@ -62,9 +73,11 @@ struct TreemapLayout: View {
             ForEach(Array(rects.enumerated()), id: \.offset) { index, item in
                 TreemapCell(
                     ticker: item.ticker,
+                    value: item.value,
                     changePercent: item.changePercent,
                     rect: item.rect,
-                    color: colorForChange(item.changePercent)
+                    color: colorForChange(item.changePercent),
+                    showDollarAmounts: showDollarAmounts
                 )
             }
         }
@@ -75,10 +88,10 @@ struct TreemapLayout: View {
         items: [(ticker: String, value: Double, changePercent: Double)],
         totalValue: Double,
         rect: CGRect
-    ) -> [(ticker: String, changePercent: Double, rect: CGRect)] {
+    ) -> [(ticker: String, value: Double, changePercent: Double, rect: CGRect)] {
         guard !items.isEmpty, totalValue > 0 else { return [] }
 
-        var result: [(ticker: String, changePercent: Double, rect: CGRect)] = []
+        var result: [(ticker: String, value: Double, changePercent: Double, rect: CGRect)] = []
         var remainingItems = items
         var currentRect = rect
 
@@ -145,7 +158,7 @@ struct TreemapLayout: View {
                     offset += itemSize
                 }
 
-                result.append((ticker: item.ticker, changePercent: item.changePercent, rect: itemRect))
+                result.append((ticker: item.ticker, value: item.value, changePercent: item.changePercent, rect: itemRect))
             }
 
             // Update remaining rect
@@ -210,42 +223,69 @@ struct TreemapLayout: View {
 
 struct TreemapCell: View {
     let ticker: String
+    let value: Double
     let changePercent: Double
     let rect: CGRect
     let color: Color
+    let showDollarAmounts: Bool
+
+    /// Text color based on background intensity - dark text for light backgrounds, white for dark
+    private var textColor: Color {
+        // For changes less than ~1.5%, use dark text since background is light
+        if abs(changePercent) < 1.5 {
+            return Color(red: 0.2, green: 0.2, blue: 0.2)
+        } else {
+            return .white
+        }
+    }
+
+    private var secondaryTextColor: Color {
+        if abs(changePercent) < 1.5 {
+            return Color(red: 0.3, green: 0.3, blue: 0.3)
+        } else {
+            return .white.opacity(0.9)
+        }
+    }
+
+    // Gap between cells
+    private let cellGap: CGFloat = 2
 
     var body: some View {
         ZStack {
-            Rectangle()
+            RoundedRectangle(cornerRadius: 4)
                 .fill(color)
-
-            Rectangle()
-                .stroke(Color.black.opacity(0.2), lineWidth: 1)
 
             // Only show text if cell is large enough
             if rect.width > 35 && rect.height > 30 {
-                VStack(spacing: 2) {
+                VStack(spacing: 1) {
                     Text(ticker)
                         .font(.system(size: fontSize, weight: .bold, design: .default))
-                        .foregroundColor(.white)
+                        .foregroundColor(textColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
 
-                    Text(changeString)
+                    Text(percentageString)
                         .font(.system(size: max(fontSize * 0.7, 8), weight: .medium))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(secondaryTextColor)
                         .lineLimit(1)
+
+                    if showDollarAmounts {
+                        Text(dollarString)
+                            .font(.system(size: max(fontSize * 0.65, 7), weight: .medium))
+                            .foregroundColor(secondaryTextColor)
+                            .lineLimit(1)
+                    }
                 }
                 .padding(4)
             } else if rect.width > 20 && rect.height > 20 {
                 // Just show ticker for smaller cells
                 Text(ticker)
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(textColor)
                     .lineLimit(1)
             }
         }
-        .frame(width: rect.width, height: rect.height)
+        .frame(width: max(rect.width - cellGap, 0), height: max(rect.height - cellGap, 0))
         .position(x: rect.midX, y: rect.midY)
     }
 
@@ -262,9 +302,28 @@ struct TreemapCell: View {
         }
     }
 
-    private var changeString: String {
-        let sign = changePercent >= 0 ? "" : ""
-        return "\(sign)\(String(format: "%.2f", changePercent))%"
+    private var percentageString: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        let formattedPercent = formatter.string(from: NSNumber(value: abs(changePercent))) ?? String(format: "%.2f", abs(changePercent))
+        let sign = changePercent >= 0 ? "+" : "-"
+        return "\(sign)\(formattedPercent)%"
+    }
+
+    private var dollarString: String {
+        // Calculate dollar gain/loss from percentage and value
+        // value is current position value, changePercent is the gain/loss %
+        // dollarChange = value * (changePercent / (100 + changePercent))
+        // This calculates the actual dollar change from the current value and percent change
+        let dollarChange = value * (changePercent / (100 + changePercent))
+        let sign = dollarChange >= 0 ? "+" : "-"
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        let formattedNumber = formatter.string(from: NSNumber(value: abs(dollarChange))) ?? "\(Int(abs(dollarChange)))"
+        return "\(sign)$\(formattedNumber)"
     }
 }
 
@@ -272,24 +331,24 @@ struct TreemapCell: View {
 
 #Preview("Heatmap Treemap") {
     let mockData: [(ticker: String, value: Double, changePercent: Double)] = [
-        ("NBIS", 25000, -10.24),
-        ("IREN", 8000, -10.19),
-        ("SYNA", 6000, -3.94),
-        ("GOOGL", 5000, -0.005),
-        ("CRM", 4500, -0.84),
-        ("HOOD", 3500, -1.74),
-        ("QQQ", 5500, -1.20),
-        ("CIFR", 3000, -9.83),
-        ("STEM", 2500, -6.14),
-        ("CCCX", 2800, -12.68),
-        ("GLDD", 1500, -2.5),
+        ("AAPL", 25000, 2.85),      // Strong gain (dark green)
+        ("MSFT", 18000, 1.50),      // Moderate gain (medium green)
+        ("GOOGL", 12000, 0.25),     // Slight gain (light green)
+        ("AMZN", 10000, -0.10),     // Flat (near white)
+        ("NVDA", 8000, -1.20),      // Moderate loss (medium red)
+        ("META", 6000, -2.75),      // Strong loss (dark red)
+        ("TSLA", 5000, 0.80),       // Light gain (light green)
+        ("AMD", 4000, -0.50),       // Slight loss (light red)
+        ("CRM", 3500, 3.50),        // Very strong gain (capped dark green)
+        ("NFLX", 3000, -3.20),      // Very strong loss (capped dark red)
+        ("INTC", 2000, 0.00),       // Flat (white)
     ]
 
     return VStack {
         Text("Performance Heatmap")
             .font(.headline)
 
-        HeatmapTreemapView(data: mockData)
+        HeatmapTreemapView(data: mockData, showDollarAmounts: false)
             .padding()
     }
 }

@@ -4,7 +4,9 @@ struct RemoveStockModal: View {
     @ObservedObject var viewModel: StockViewModel
     @Binding var showingModal: Bool
     let ticker: String
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isDarkMode: Bool { colorScheme == .dark }
     
     var body: some View {
         ZStack {

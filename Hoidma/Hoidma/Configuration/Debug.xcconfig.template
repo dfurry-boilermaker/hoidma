@@ -1,0 +1,20 @@
+// Debug.xcconfig.template
+//
+// SETUP INSTRUCTIONS:
+// 1. Copy this file to Debug.xcconfig (remove .template extension)
+// 2. Replace placeholder values with your actual API keys
+// 3. Debug.xcconfig is gitignored - your keys stay local
+//
+// =============================================================================
+
+// Polygon.io API Key (Free tier: 5 calls/min, Starter $29/mo: unlimited)
+// Sign up at: https://polygon.io/
+POLYGON_API_KEY = REPLACE_WITH_YOUR_POLYGON_API_KEY
+
+// Financial Modeling Prep API Key (Free tier: 250 calls/day)
+// Sign up at: https://financialmodelingprep.com/
+FMP_API_KEY = REPLACE_WITH_YOUR_FMP_API_KEY
+
+// Build Settings - These inject the keys into Info.plist at build time
+INFOPLIST_KEY_POLYGON_API_KEY = $(POLYGON_API_KEY)
+INFOPLIST_KEY_FMP_API_KEY = $(FMP_API_KEY)

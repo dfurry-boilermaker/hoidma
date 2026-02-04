@@ -2,13 +2,18 @@ import SwiftUI
 
 struct BottomNavigationBar: View {
     @Binding var selectedTab: Int
-    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
     var onTabSelected: ((Int) -> Void)?
 
-    private let tabs: [(id: Int, lightIcon: String, darkIcon: String)] = [
-        (1, "dog.house", "dog.house.dark"),
-        (2, "visuals", "visuals.dark"),
-        (3, "accounts", "accounts.dark")
+    private var isDarkMode: Bool { colorScheme == .dark }
+
+    // Tab order: Portfolio (1), Visuals (2), Charts (3), Accounts (4), Profile (5)
+    private let tabs: [(id: Int, lightIcon: String, darkIcon: String, isSystemImage: Bool)] = [
+        (1, "dog.house", "dog.house.dark", false),
+        (2, "visuals", "visuals.dark", false),
+        (3, "chart", "chart.dark", false),
+        (4, "accounts", "accounts.dark", false),
+        (5, "profile", "profile.dark", false)
     ]
 
     var body: some View {
@@ -23,7 +28,8 @@ struct BottomNavigationBar: View {
                 ForEach(tabs, id: \.id) { tab in
                     TabBarButton(
                         isSelected: selectedTab == tab.id,
-                        iconName: isDarkMode ? tab.darkIcon : tab.lightIcon
+                        iconName: isDarkMode ? tab.darkIcon : tab.lightIcon,
+                        isSystemImage: tab.isSystemImage
                     ) {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             selectedTab = tab.id
@@ -33,14 +39,12 @@ struct BottomNavigationBar: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.top, 6)
+            .padding(.top, 16)
             .padding(.bottom, 4)
         }
-        .background(
-            Color(UIColor.systemBackground)
-                .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: -2)
-                .ignoresSafeArea(edges: .bottom)
-        )
+        .background(.ultraThinMaterial)
+        .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: -4)
+        .ignoresSafeArea(edges: .bottom)
     }
 }
 
@@ -48,24 +52,28 @@ struct BottomNavigationBar: View {
 private struct TabBarButton: View {
     let isSelected: Bool
     let iconName: String
+    let isSystemImage: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(iconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(height: 20)
-                    .opacity(isSelected ? 1.0 : 0.4)
-
-                // Selection indicator
-                Circle()
-                    .fill(isSelected ? Color.primary : Color.clear)
-                    .frame(width: 4, height: 4)
+            Group {
+                if isSystemImage {
+                    Image(systemName: iconName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: 24)
+                        .foregroundColor(.primary)
+                } else {
+                    Image(iconName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: 26)
+                }
             }
+            .opacity(isSelected ? 1.0 : 0.4)
             .frame(maxWidth: .infinity)
-            .frame(height: 32)
+            .frame(height: 36)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())

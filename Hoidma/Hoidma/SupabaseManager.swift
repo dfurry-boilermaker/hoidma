@@ -109,10 +109,52 @@ struct DBUser: Codable {
     }
 }
 
+// MARK: - Supabase Error Types
+
+/// Specific error types for Supabase operations
+enum SupabaseError: Error, LocalizedError {
+    case networkError(underlying: Error)
+    case authenticationRequired
+    case userNotFound
+    case databaseError(message: String)
+    case timeout
+
+    var errorDescription: String? {
+        switch self {
+        case .networkError:
+            return "Network error"
+        case .authenticationRequired:
+            return "Authentication required"
+        case .userNotFound:
+            return "User not found"
+        case .databaseError(let message):
+            return "Database error: \(message)"
+        case .timeout:
+            return "Request timed out"
+        }
+    }
+
+    /// Whether this error is transient and should be retried
+    var isRetryable: Bool {
+        switch self {
+        case .networkError, .timeout:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 // MARK: - Supabase Manager
 
 /// Manages Supabase database interactions for user portfolios
 /// Provides real-time sync using Supabase Realtime
+///
+/// SECURITY FEATURES:
+/// - User ownership validation on all data operations
+/// - Proper task cancellation to prevent memory leaks
+/// - Safe optional handling (no force-unwraps)
+/// - Retry logic for transient network failures
 @MainActor
 class SupabaseManager: ObservableObject {
     @Published var stocks: [Stock] = []
@@ -121,6 +163,12 @@ class SupabaseManager: ObservableObject {
 
     private nonisolated(unsafe) var realtimeChannel: RealtimeChannelV2?
     private var cancellables = Set<AnyCancellable>()
+
+    /// SECURITY FIX: Store listener task for proper cancellation
+    private var listenerTask: Task<Void, Never>?
+
+    /// Maximum retry attempts for transient errors
+    private let maxRetryAttempts = 3
 
     init() {
         // Listen for auth state changes
@@ -151,6 +199,10 @@ class SupabaseManager: ObservableObject {
     }
 
     deinit {
+        // SECURITY FIX: Cancel listener task to prevent memory leak
+        listenerTask?.cancel()
+        listenerTask = nil
+
         let channel = realtimeChannel
         Task {
             await channel?.unsubscribe()
@@ -167,7 +219,7 @@ class SupabaseManager: ObservableObject {
             await setupUser()
             await startDataListener()
         } catch {
-            print("SupabaseManager: No active session")
+            AppLogger.debug("SupabaseManager: No active session")
         }
     }
 
@@ -179,7 +231,7 @@ class SupabaseManager: ObservableObject {
             // Get email from auth user
             let user = try await SupabaseConfig.client.auth.user()
             guard let email = user.email else {
-                print("SupabaseManager: No email for user")
+                AppLogger.debug("SupabaseManager: No email for user")
                 return
             }
 
@@ -192,14 +244,26 @@ class SupabaseManager: ObservableObject {
                 .value
 
             if let existingUser = existingUsers.first {
+                // SECURITY: Verify ownership - ensure returned user matches authenticated user
+                guard existingUser.authUserId == authUserId else {
+                    AppLogger.warning("SupabaseManager: User ownership mismatch - security violation")
+                    return
+                }
+
+                // SECURITY FIX: Safe optional handling instead of force-unwrap
+                guard let existingUserId = existingUser.id else {
+                    AppLogger.warning("SupabaseManager: User record has no ID")
+                    return
+                }
+
                 // Update last sign in
-                self.dbUserId = existingUser.id
+                self.dbUserId = existingUserId
                 try await SupabaseConfig.client
                     .from("users")
                     .update(["last_sign_in_at": ISO8601DateFormatter().string(from: Date())])
-                    .eq("id", value: existingUser.id!.uuidString)
+                    .eq("id", value: existingUserId.uuidString)
                     .execute()
-                print("SupabaseManager: Updated user record")
+                AppLogger.debug("SupabaseManager: Updated user record")
             } else {
                 // Create new user
                 let newUser: [String: String] = [
@@ -214,10 +278,10 @@ class SupabaseManager: ObservableObject {
                     .value
 
                 self.dbUserId = insertedUsers.first?.id
-                print("SupabaseManager: Created user record with ID: \(self.dbUserId?.uuidString ?? "nil")")
+                AppLogger.debug("SupabaseManager: Created user record")
             }
         } catch {
-            print("SupabaseManager: Error setting up user: \(error.localizedDescription)")
+            AppLogger.error("SupabaseManager: Error setting up user: \(error.localizedDescription)")
         }
     }
 
@@ -226,14 +290,14 @@ class SupabaseManager: ObservableObject {
     /// Start listening to user's portfolio data via Supabase Realtime
     func startDataListener() async {
         guard let dbUserId = dbUserId else {
-            print("SupabaseManager: No user ID, cannot start listener")
+            AppLogger.debug("SupabaseManager: No user ID, cannot start listener")
             return
         }
 
         // Stop existing listener
         stopDataListener()
 
-        print("SupabaseManager: Starting realtime listener for user \(dbUserId)...")
+        AppLogger.debug("SupabaseManager: Starting realtime listener...")
 
         // Initial fetch
         await fetchStocks()
@@ -248,28 +312,75 @@ class SupabaseManager: ObservableObject {
             filter: .eq("user_id", value: dbUserId.uuidString)
         )
 
-        // Listen for stock changes
-        Task {
+        // SECURITY FIX: Store listener task for proper cancellation
+        listenerTask = Task { [weak self] in
             for await _ in stocksStream {
-                print("SupabaseManager: Stocks changed")
-                await fetchStocks()
+                guard let self = self else { break }
+                AppLogger.debug("SupabaseManager: Stocks changed")
+                await self.fetchStocks()
             }
         }
 
         do {
             try await channel.subscribeWithError()
         } catch {
-            print("SupabaseManager: Failed to subscribe to realtime: \(error.localizedDescription)")
+            AppLogger.error("SupabaseManager: Failed to subscribe to realtime: \(error.localizedDescription)")
         }
         self.realtimeChannel = channel
-        print("SupabaseManager: Realtime subscription active")
+        AppLogger.debug("SupabaseManager: Realtime subscription active")
     }
 
     /// Stop listening to Supabase realtime updates
     func stopDataListener() {
+        // SECURITY FIX: Cancel listener task to prevent memory leak
+        listenerTask?.cancel()
+        listenerTask = nil
+
         Task {
             await realtimeChannel?.unsubscribe()
             realtimeChannel = nil
+        }
+    }
+
+    // MARK: - Retry Logic
+
+    /// Perform an operation with retry logic for transient errors
+    /// - Parameters:
+    ///   - operation: The name of the operation (for logging)
+    ///   - attempt: Current attempt number (used internally)
+    ///   - action: The async operation to perform
+    /// - Returns: The result of the operation
+    @discardableResult
+    private func performWithRetry<T>(
+        operation: String,
+        attempt: Int = 1,
+        action: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await action()
+        } catch let error as URLError where error.code == .timedOut || error.code == .notConnectedToInternet || error.code == .networkConnectionLost {
+            // Network errors are retryable
+            if attempt < maxRetryAttempts {
+                let delay = pow(2.0, Double(attempt - 1)) // Exponential backoff: 1s, 2s, 4s
+                AppLogger.debug("SupabaseManager: Retrying \(operation) after \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                return try await performWithRetry(operation: operation, attempt: attempt + 1, action: action)
+            }
+            throw SupabaseError.networkError(underlying: error)
+        } catch {
+            // Check if error message indicates a transient error
+            let errorMessage = error.localizedDescription.lowercased()
+            let isTransient = errorMessage.contains("network") ||
+                              errorMessage.contains("timeout") ||
+                              errorMessage.contains("connection")
+
+            if isTransient && attempt < maxRetryAttempts {
+                let delay = pow(2.0, Double(attempt - 1))
+                AppLogger.debug("SupabaseManager: Retrying \(operation) after \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                return try await performWithRetry(operation: operation, attempt: attempt + 1, action: action)
+            }
+            throw error
         }
     }
 
@@ -280,26 +391,30 @@ class SupabaseManager: ObservableObject {
         guard let dbUserId = dbUserId else { return }
 
         do {
-            // Fetch committed stocks
-            let dbStocks: [DBStock] = try await SupabaseConfig.client
-                .from("stocks")
-                .select()
-                .eq("user_id", value: dbUserId.uuidString)
-                .eq("is_committed", value: true)
-                .execute()
-                .value
+            // Fetch committed stocks with retry
+            let dbStocks: [DBStock] = try await performWithRetry(operation: "fetchStocks") {
+                try await SupabaseConfig.client
+                    .from("stocks")
+                    .select()
+                    .eq("user_id", value: dbUserId.uuidString)
+                    .eq("is_committed", value: true)
+                    .execute()
+                    .value
+            }
 
             // Fetch lots for each stock
             var stocksWithLots: [Stock] = []
             for dbStock in dbStocks {
                 guard let stockId = dbStock.id else { continue }
 
-                let dbLots: [DBStockLot] = try await SupabaseConfig.client
-                    .from("stock_lots")
-                    .select()
-                    .eq("stock_id", value: stockId.uuidString)
-                    .execute()
-                    .value
+                let dbLots: [DBStockLot] = try await performWithRetry(operation: "fetchLots-\(dbStock.ticker)") {
+                    try await SupabaseConfig.client
+                        .from("stock_lots")
+                        .select()
+                        .eq("stock_id", value: stockId.uuidString)
+                        .execute()
+                        .value
+                }
 
                 let lots = dbLots.map { $0.toStockLot() }
                 let stock = dbStock.toStock(lots: lots)
@@ -307,9 +422,9 @@ class SupabaseManager: ObservableObject {
             }
 
             self.stocks = stocksWithLots
-            print("SupabaseManager: Loaded \(stocks.count) stocks")
+            AppLogger.info("SupabaseManager: Loaded \(stocks.count) stocks")
         } catch {
-            print("SupabaseManager: Error fetching stocks: \(error.localizedDescription)")
+            AppLogger.error("SupabaseManager: Error fetching stocks: \(error.localizedDescription)")
         }
     }
 
@@ -318,29 +433,31 @@ class SupabaseManager: ObservableObject {
     /// Commit a stock to Supabase
     func commit(newStock: Stock) async {
         guard let dbUserId = dbUserId else {
-            print("SupabaseManager: No user ID, cannot commit stock")
+            AppLogger.debug("SupabaseManager: No user ID, cannot commit stock")
             return
         }
 
-        print("SupabaseManager: Committing stock \(newStock.ticker)...")
+        AppLogger.debug("SupabaseManager: Committing stock \(newStock.ticker)...")
 
         var committedStock = newStock
         committedStock.isMaritalStatus = true
 
         do {
-            // Check if stock already exists
-            let existingStocks: [DBStock] = try await SupabaseConfig.client
-                .from("stocks")
-                .select()
-                .eq("user_id", value: dbUserId.uuidString)
-                .eq("ticker", value: newStock.ticker.uppercased())
-                .execute()
-                .value
+            // Check if stock already exists (with retry)
+            let existingStocks: [DBStock] = try await performWithRetry(operation: "checkExistingStock-\(newStock.ticker)") {
+                try await SupabaseConfig.client
+                    .from("stocks")
+                    .select()
+                    .eq("user_id", value: dbUserId.uuidString)
+                    .eq("ticker", value: newStock.ticker.uppercased())
+                    .execute()
+                    .value
+            }
 
             var stockId: UUID
 
             if let existingStock = existingStocks.first, let existingId = existingStock.id {
-                // Update existing stock
+                // Update existing stock (with retry)
                 stockId = existingId
                 let updateData: [String: AnyEncodable] = [
                     "company_name": AnyEncodable(committedStock.companyName),
@@ -349,22 +466,26 @@ class SupabaseManager: ObservableObject {
                     "is_committed": AnyEncodable(true),
                     "updated_at": AnyEncodable(ISO8601DateFormatter().string(from: Date()))
                 ]
-                try await SupabaseConfig.client
-                    .from("stocks")
-                    .update(updateData)
-                    .eq("id", value: stockId.uuidString)
-                    .execute()
+                try await performWithRetry(operation: "updateStock-\(newStock.ticker)") {
+                    try await SupabaseConfig.client
+                        .from("stocks")
+                        .update(updateData)
+                        .eq("id", value: stockId.uuidString)
+                        .execute()
+                }
 
-                // Delete existing lots and re-insert
-                try await SupabaseConfig.client
-                    .from("stock_lots")
-                    .delete()
-                    .eq("stock_id", value: stockId.uuidString)
-                    .execute()
+                // Delete existing lots and re-insert (with retry)
+                try await performWithRetry(operation: "deleteLots-\(newStock.ticker)") {
+                    try await SupabaseConfig.client
+                        .from("stock_lots")
+                        .delete()
+                        .eq("stock_id", value: stockId.uuidString)
+                        .execute()
+                }
 
-                print("SupabaseManager: Updated existing stock \(newStock.ticker)")
+                AppLogger.debug("SupabaseManager: Updated existing stock \(newStock.ticker)")
             } else {
-                // Insert new stock
+                // Insert new stock (with retry)
                 let insertData: [String: AnyEncodable] = [
                     "user_id": AnyEncodable(dbUserId.uuidString),
                     "ticker": AnyEncodable(committedStock.ticker.uppercased()),
@@ -373,22 +494,24 @@ class SupabaseManager: ObservableObject {
                     "shares": AnyEncodable(committedStock.shares),
                     "is_committed": AnyEncodable(true)
                 ]
-                let insertedStocks: [DBStock] = try await SupabaseConfig.client
-                    .from("stocks")
-                    .insert(insertData)
-                    .select()
-                    .execute()
-                    .value
+                let insertedStocks: [DBStock] = try await performWithRetry(operation: "insertStock-\(newStock.ticker)") {
+                    try await SupabaseConfig.client
+                        .from("stocks")
+                        .insert(insertData)
+                        .select()
+                        .execute()
+                        .value
+                }
 
                 guard let insertedStock = insertedStocks.first, let insertedId = insertedStock.id else {
-                    print("SupabaseManager: Failed to get inserted stock ID")
+                    AppLogger.error("SupabaseManager: Failed to get inserted stock ID")
                     return
                 }
                 stockId = insertedId
-                print("SupabaseManager: Inserted new stock \(newStock.ticker) with ID \(stockId)")
+                AppLogger.debug("SupabaseManager: Inserted new stock \(newStock.ticker)")
             }
 
-            // Insert lots
+            // Insert lots (with retry for each)
             for lot in committedStock.lots {
                 let lotData: [String: AnyEncodable] = [
                     "stock_id": AnyEncodable(stockId.uuidString),
@@ -396,39 +519,43 @@ class SupabaseManager: ObservableObject {
                     "shares": AnyEncodable(lot.shares),
                     "purchase_price": AnyEncodable(lot.purchasePrice)
                 ]
-                try await SupabaseConfig.client
-                    .from("stock_lots")
-                    .insert(lotData)
-                    .execute()
+                try await performWithRetry(operation: "insertLot-\(newStock.ticker)") {
+                    try await SupabaseConfig.client
+                        .from("stock_lots")
+                        .insert(lotData)
+                        .execute()
+                }
             }
 
-            print("SupabaseManager: Successfully committed stock \(newStock.ticker) with \(committedStock.lots.count) lots")
+            AppLogger.debug("SupabaseManager: Successfully committed stock \(newStock.ticker) with \(committedStock.lots.count) lots")
         } catch {
-            print("SupabaseManager: Error committing stock: \(error.localizedDescription)")
+            AppLogger.error("SupabaseManager: Error committing stock: \(error.localizedDescription)")
         }
     }
 
     /// Remove a stock from Supabase
     func removeStock(ticker: String) async {
         guard let dbUserId = dbUserId else {
-            print("SupabaseManager: No user ID, cannot remove stock")
+            AppLogger.debug("SupabaseManager: No user ID, cannot remove stock")
             return
         }
 
-        print("SupabaseManager: Removing stock \(ticker)...")
+        AppLogger.debug("SupabaseManager: Removing stock \(ticker)...")
 
         do {
-            // CASCADE delete will handle stock_lots
-            try await SupabaseConfig.client
-                .from("stocks")
-                .delete()
-                .eq("user_id", value: dbUserId.uuidString)
-                .eq("ticker", value: ticker.uppercased())
-                .execute()
+            // CASCADE delete will handle stock_lots (with retry)
+            try await performWithRetry(operation: "removeStock-\(ticker)") {
+                try await SupabaseConfig.client
+                    .from("stocks")
+                    .delete()
+                    .eq("user_id", value: dbUserId.uuidString)
+                    .eq("ticker", value: ticker.uppercased())
+                    .execute()
+            }
 
-            print("SupabaseManager: Successfully removed stock \(ticker)")
+            AppLogger.debug("SupabaseManager: Successfully removed stock \(ticker)")
         } catch {
-            print("SupabaseManager: Error removing stock: \(error.localizedDescription)")
+            AppLogger.error("SupabaseManager: Error removing stock: \(error.localizedDescription)")
         }
     }
 }

@@ -1,8 +1,15 @@
 import Foundation
 import Combine
 import Supabase
+import UIKit
 
 /// Manages user authentication using Supabase Email OTP (Magic Code)
+///
+/// SECURITY FEATURES:
+/// - Email stored in Keychain (not UserDefaults)
+/// - OTP verification rate limiting with lockout
+/// - Sanitized error messages (no internal details exposed)
+/// - Session re-validation on app foreground
 @MainActor
 class SupabaseAuthManager: ObservableObject {
     @Published var isAuthenticated = false
@@ -10,17 +17,53 @@ class SupabaseAuthManager: ObservableObject {
     @Published var email: String?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var rateLimitMessage: String?
 
     private var authStateTask: Task<Void, Never>?
+    private var foregroundObserver: NSObjectProtocol?
+
+    /// OTP rate limiter for security
+    private let otpRateLimiter = OTPRateLimiter()
 
     init() {
-        print("SupabaseAuthManager: Initializing...")
+        AppLogger.debug("SupabaseAuthManager: Initializing...")
+        loadEmailFromKeychain()
         setupAuthStateListener()
+        setupForegroundObserver()
         checkAuthState()
     }
 
     deinit {
         authStateTask?.cancel()
+        if let observer = foregroundObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    // MARK: - Keychain Storage
+
+    /// Load email from Keychain
+    private func loadEmailFromKeychain() {
+        if let savedEmail = KeychainHelper.load(forKey: .userEmail) {
+            self.email = savedEmail
+            AppLogger.debug("SupabaseAuthManager: Loaded email from Keychain")
+        }
+    }
+
+    /// Save email to Keychain
+    private func saveEmailToKeychain(_ email: String) {
+        do {
+            try KeychainHelper.save(email, forKey: .userEmail)
+            AppLogger.debug("SupabaseAuthManager: Saved email to Keychain")
+        } catch {
+            AppLogger.warning("SupabaseAuthManager: Failed to save email to Keychain")
+        }
+    }
+
+    /// Remove email from Keychain
+    private func removeEmailFromKeychain() {
+        KeychainHelper.delete(forKey: .userEmail)
+        AppLogger.debug("SupabaseAuthManager: Removed email from Keychain")
     }
 
     // MARK: - Auth State Management
@@ -34,6 +77,43 @@ class SupabaseAuthManager: ObservableObject {
         }
     }
 
+    /// Set up observer to re-validate session when app enters foreground
+    private func setupForegroundObserver() {
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.revalidateSession()
+            }
+        }
+    }
+
+    /// Re-validate the session when app enters foreground
+    private func revalidateSession() async {
+        guard isAuthenticated else { return }
+
+        do {
+            // Attempt to refresh the session
+            _ = try await SupabaseConfig.client.auth.session
+            AppLogger.debug("SupabaseAuthManager: Session re-validated")
+        } catch {
+            // Session invalid - sign out
+            AppLogger.warning("SupabaseAuthManager: Session invalid on foreground, signing out")
+            self.currentUser = nil
+            self.isAuthenticated = false
+            self.email = nil
+            removeEmailFromKeychain()
+
+            NotificationCenter.default.post(
+                name: .supabaseAuthStateChanged,
+                object: nil,
+                userInfo: nil
+            )
+        }
+    }
+
     private func handleAuthStateChange(event: AuthChangeEvent, session: Session?) async {
         switch event {
         case .initialSession, .signedIn:
@@ -42,10 +122,13 @@ class SupabaseAuthManager: ObservableObject {
                 self.isAuthenticated = true
                 self.email = session.user.email
 
-                // Save email locally
+                // Save email to Keychain (secure storage)
                 if let email = session.user.email {
-                    UserDefaults.standard.set(email, forKey: "userEmail")
+                    saveEmailToKeychain(email)
                 }
+
+                // Reset rate limiter on successful auth
+                await otpRateLimiter.recordSuccess()
 
                 // Notify SupabaseManager of auth change
                 NotificationCenter.default.post(
@@ -54,13 +137,13 @@ class SupabaseAuthManager: ObservableObject {
                     userInfo: ["userId": session.user.id]
                 )
 
-                print("SupabaseAuthManager: User signed in - \(session.user.id)")
+                AppLogger.debug("SupabaseAuthManager: User signed in")
             }
         case .signedOut:
             self.currentUser = nil
             self.isAuthenticated = false
             self.email = nil
-            UserDefaults.standard.removeObject(forKey: "userEmail")
+            removeEmailFromKeychain()
 
             // Notify SupabaseManager
             NotificationCenter.default.post(
@@ -69,9 +152,9 @@ class SupabaseAuthManager: ObservableObject {
                 userInfo: nil
             )
 
-            print("SupabaseAuthManager: User signed out")
+            AppLogger.debug("SupabaseAuthManager: User signed out")
         case .tokenRefreshed:
-            print("SupabaseAuthManager: Token refreshed")
+            AppLogger.debug("SupabaseAuthManager: Token refreshed")
         default:
             break
         }
@@ -84,14 +167,14 @@ class SupabaseAuthManager: ObservableObject {
                 let session = try await SupabaseConfig.client.auth.session
                 self.currentUser = session.user
                 self.isAuthenticated = true
-                self.email = session.user.email ?? UserDefaults.standard.string(forKey: "userEmail")
-                print("SupabaseAuthManager: Found existing session for user \(session.user.id)")
+                self.email = session.user.email ?? KeychainHelper.load(forKey: .userEmail)
+                AppLogger.debug("SupabaseAuthManager: Found existing session")
             } catch {
-                // No active session
-                if let savedEmail = UserDefaults.standard.string(forKey: "userEmail") {
+                // No active session - try to load cached email
+                if let savedEmail = KeychainHelper.load(forKey: .userEmail) {
                     self.email = savedEmail
                 }
-                print("SupabaseAuthManager: No existing session")
+                AppLogger.debug("SupabaseAuthManager: No existing session")
             }
         }
     }
@@ -103,11 +186,12 @@ class SupabaseAuthManager: ObservableObject {
     func sendVerificationCode(to email: String) async throws {
         isLoading = true
         errorMessage = nil
+        rateLimitMessage = nil
 
         do {
             let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-            print("SupabaseAuthManager: Sending OTP to \(trimmedEmail)...")
+            AppLogger.debug("SupabaseAuthManager: Sending OTP...")
 
             // Send OTP via Supabase Email
             try await SupabaseConfig.client.auth.signInWithOTP(
@@ -117,11 +201,14 @@ class SupabaseAuthManager: ObservableObject {
             self.email = trimmedEmail
             self.isLoading = false
 
-            print("SupabaseAuthManager: OTP sent successfully to email")
+            // Notify rate limiter that a new code was sent
+            await otpRateLimiter.newCodeRequested()
+
+            AppLogger.debug("SupabaseAuthManager: OTP sent successfully")
         } catch {
-            print("SupabaseAuthManager: Error sending OTP: \(error.localizedDescription)")
+            AppLogger.warning("SupabaseAuthManager: Error sending OTP")
             self.isLoading = false
-            self.errorMessage = mapError(error)
+            self.errorMessage = mapErrorToSafeMessage(error)
             throw error
         }
     }
@@ -130,15 +217,26 @@ class SupabaseAuthManager: ObservableObject {
     /// - Parameter code: The 6-digit verification code
     func verifyCode(_ code: String) async throws {
         guard let email = email else {
-            print("SupabaseAuthManager: Missing email")
+            AppLogger.warning("SupabaseAuthManager: Missing email")
             throw SupabaseAuthError.missingEmail
+        }
+
+        // Check rate limit BEFORE attempting verification
+        let (allowed, message) = await otpRateLimiter.canVerify()
+        if !allowed {
+            rateLimitMessage = message
+            throw SupabaseAuthError.rateLimited(message: message ?? "Too many attempts")
         }
 
         isLoading = true
         errorMessage = nil
+        rateLimitMessage = nil
+
+        // Record the attempt
+        await otpRateLimiter.recordAttempt()
 
         do {
-            print("SupabaseAuthManager: Verifying OTP for \(email)...")
+            AppLogger.debug("SupabaseAuthManager: Verifying OTP...")
 
             let session = try await SupabaseConfig.client.auth.verifyOTP(
                 email: email,
@@ -150,16 +248,34 @@ class SupabaseAuthManager: ObservableObject {
             self.isAuthenticated = true
             self.isLoading = false
 
-            // Save email
-            UserDefaults.standard.set(email, forKey: "userEmail")
+            // Save email to Keychain
+            saveEmailToKeychain(email)
 
-            print("SupabaseAuthManager: Verification successful")
-            print("   User ID: \(session.user.id)")
-            print("   Email: \(session.user.email ?? "nil")")
+            // Record success (resets rate limiter)
+            await otpRateLimiter.recordSuccess()
+
+            AppLogger.debug("SupabaseAuthManager: Verification successful")
         } catch {
-            print("SupabaseAuthManager: Error verifying OTP: \(error.localizedDescription)")
+            // Record failure for rate limiting
+            await otpRateLimiter.recordFailure()
+
+            // Check if now locked out
+            if await otpRateLimiter.isLockedOut() {
+                let seconds = await otpRateLimiter.lockoutRemainingSeconds()
+                let minutes = seconds / 60
+                rateLimitMessage = "Too many failed attempts. Try again in \(minutes) minutes."
+                AppLogger.warning("SupabaseAuthManager: User locked out after too many failed OTP attempts")
+            }
+
+            // Show remaining attempts
+            let remaining = await otpRateLimiter.remainingAttempts()
+            if remaining > 0 && remaining < 3 {
+                rateLimitMessage = "\(remaining) attempt\(remaining == 1 ? "" : "s") remaining"
+            }
+
+            AppLogger.warning("SupabaseAuthManager: Error verifying OTP")
             self.isLoading = false
-            self.errorMessage = mapError(error)
+            self.errorMessage = mapErrorToSafeMessage(error)
             throw error
         }
     }
@@ -171,10 +287,10 @@ class SupabaseAuthManager: ObservableObject {
             self.isAuthenticated = false
             self.currentUser = nil
             self.email = nil
-            UserDefaults.standard.removeObject(forKey: "userEmail")
-            print("SupabaseAuthManager: Signed out successfully")
+            removeEmailFromKeychain()
+            AppLogger.debug("SupabaseAuthManager: Signed out successfully")
         } catch {
-            print("SupabaseAuthManager: Error signing out: \(error.localizedDescription)")
+            AppLogger.warning("SupabaseAuthManager: Error signing out")
             throw error
         }
     }
@@ -186,23 +302,28 @@ class SupabaseAuthManager: ObservableObject {
         return currentUser?.id
     }
 
-    /// Map errors to user-friendly messages
-    private func mapError(_ error: Error) -> String {
+    /// Map errors to safe, user-friendly messages
+    /// SECURITY: Never expose internal error details to users
+    private func mapErrorToSafeMessage(_ error: Error) -> String {
         let errorDescription = error.localizedDescription.lowercased()
 
-        if errorDescription.contains("invalid") {
-            return "Invalid verification code. Please try again."
+        // Check for specific, safe-to-expose error types
+        if errorDescription.contains("invalid") || errorDescription.contains("incorrect") {
+            return "Invalid verification code. Please check and try again."
         } else if errorDescription.contains("expired") {
-            return "Verification code expired. Please request a new one."
-        } else if errorDescription.contains("rate") || errorDescription.contains("limit") {
-            return "Too many attempts. Please wait a moment and try again."
-        } else if errorDescription.contains("network") {
+            return "Verification code expired. Please request a new code."
+        } else if errorDescription.contains("rate") || errorDescription.contains("limit") || errorDescription.contains("too many") {
+            return "Too many attempts. Please wait and try again."
+        } else if errorDescription.contains("network") || errorDescription.contains("connection") || errorDescription.contains("offline") {
             return "Network error. Please check your connection."
-        } else if errorDescription.contains("email") && errorDescription.contains("format") {
+        } else if errorDescription.contains("email") && (errorDescription.contains("format") || errorDescription.contains("invalid")) {
             return "Please enter a valid email address."
         }
 
-        return "An error occurred: \(error.localizedDescription)"
+        // SECURITY: Return generic message for all other errors
+        // Never expose: server errors, database errors, internal states
+        AppLogger.debug("SupabaseAuthManager: Unmapped error type: \(type(of: error))")
+        return "Unable to complete request. Please try again."
     }
 }
 
@@ -210,11 +331,14 @@ class SupabaseAuthManager: ObservableObject {
 
 enum SupabaseAuthError: LocalizedError {
     case missingEmail
+    case rateLimited(message: String)
 
     var errorDescription: String? {
         switch self {
         case .missingEmail:
             return "Email is missing. Please enter your email address."
+        case .rateLimited(let message):
+            return message
         }
     }
 }
