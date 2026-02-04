@@ -190,28 +190,31 @@ struct HoidmaApp: App {
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
             }
             .onChange(of: biometricAuth.isUnlocked) { oldValue, newValue in
-                // When biometric auth succeeds, dismiss loading and lock screen
+                // When biometric auth succeeds, start loading stock data
                 if newValue {
-                    AppLogger.debug("Biometric unlocked - dismissing screens and refreshing prices")
+                    AppLogger.debug("Biometric unlocked - loading stock data")
                     selectedTab = 1
-
-                    // Dismiss with fade animation
-                    if isLoading || showLockScreen {
-                        withAnimation(.easeInOut(duration: 0.4)) {
-                            loadingOpacity = 0.0
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            isLoading = false
-                            showLockScreen = false
-                        }
-                    }
 
                     // Refresh stock prices after unlocking
                     if authManager.isAuthenticated {
                         Task { @MainActor in
                             await stockViewModel.updateAllPrices()
+                            // Data is now ready, check if we should dismiss loading screen
+                            if stockViewModel.isDataReady {
+                                dismissLoadingScreen()
+                            }
                         }
+                    } else if stockViewModel.isDataReady {
+                        // No auth needed or data already ready
+                        dismissLoadingScreen()
                     }
+                }
+            }
+            .onChange(of: stockViewModel.isDataReady) { oldValue, newValue in
+                // When stock data is ready, check if we should dismiss loading screen
+                if newValue && biometricAuth.isUnlocked {
+                    AppLogger.debug("Stock data ready and unlocked - dismissing loading screen")
+                    dismissLoadingScreen()
                 }
             }
             .onChange(of: authManager.isAuthenticated) { oldValue, newValue in
@@ -237,11 +240,16 @@ struct HoidmaApp: App {
 
         // User is authenticated - check biometric
         if !biometricAuth.biometricAuthEnabled {
-            // Biometric disabled - unlock and proceed
-            AppLogger.debug("Biometric disabled - unlocking")
+            // Biometric disabled - unlock and load data
+            AppLogger.debug("Biometric disabled - unlocking and loading data")
             biometricAuth.isUnlocked = true
             selectedTab = 1
-            dismissLoadingWithFade()
+
+            // Load stock data and wait for it to be ready
+            await stockViewModel.updateAllPrices()
+            if stockViewModel.isDataReady {
+                dismissLoadingWithFade()
+            }
             return
         }
 
@@ -251,9 +259,12 @@ struct HoidmaApp: App {
             AppLogger.debug("Keeping loading screen - biometric auth will trigger automatically")
             // Loading screen stays visible and handles biometric auth
         } else {
-            // Already unlocked
+            // Already unlocked - load data
             selectedTab = 1
-            dismissLoadingWithFade()
+            await stockViewModel.updateAllPrices()
+            if stockViewModel.isDataReady {
+                dismissLoadingWithFade()
+            }
         }
     }
 
@@ -293,8 +304,8 @@ struct HoidmaApp: App {
         }
     }
 
-    private func dismissLoadingWithFade() {
-        guard isLoading else { return }
+    private func dismissLoadingScreen() {
+        guard isLoading || showLockScreen else { return }
 
         AppLogger.debug("Dismissing loading screen")
 
@@ -305,6 +316,11 @@ struct HoidmaApp: App {
         // Remove loading view after fade completes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             isLoading = false
+            showLockScreen = false
         }
+    }
+
+    private func dismissLoadingWithFade() {
+        dismissLoadingScreen()
     }
 }
