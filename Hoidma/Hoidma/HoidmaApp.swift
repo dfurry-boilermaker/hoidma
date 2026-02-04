@@ -5,6 +5,11 @@ import UserNotifications
 
 // MARK: - Loading Screen View
 struct LoadingView: View {
+    @ObservedObject var biometricAuth: BiometricAuthManager
+    @EnvironmentObject var authManager: SupabaseAuthManager
+    var onUnlockTapped: () -> Void
+    var onLogoutTapped: () -> Void
+
     var body: some View {
         ZStack {
             // Background color matching the image to prevent any gaps
@@ -19,6 +24,44 @@ struct LoadingView: View {
                     .clipped()
             }
             .ignoresSafeArea(.all)
+
+            // Buttons at bottom (only show after auth has been attempted)
+            if biometricAuth.hasAttemptedAuth {
+                VStack {
+                    Spacer()
+
+                    VStack(spacing: 16) {
+                        // Unlock button
+                        Button(action: onUnlockTapped) {
+                            Text(biometricAuth.isAuthenticating ? "Authenticating..." : "Unlock")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.black)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 56)
+                                .background(Color(red: 0.0, green: 1.0, blue: 0.3))
+                                .cornerRadius(28)
+                        }
+                        .disabled(biometricAuth.isAuthenticating)
+                        .padding(.horizontal, 32)
+
+                        // Log out button
+                        Button(action: onLogoutTapped) {
+                            Text("Log out")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(Color(red: 0.0, green: 1.0, blue: 0.3))
+                        }
+                    }
+                    .padding(.bottom, 60)
+                }
+            }
+        }
+        .onAppear {
+            // Automatically trigger Face ID when loading screen appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if !biometricAuth.isUnlocked && biometricAuth.biometricAuthEnabled {
+                    biometricAuth.authenticate()
+                }
+            }
         }
     }
 }
@@ -103,18 +146,28 @@ struct HoidmaApp: App {
                 .environmentObject(authManager)
                 .environmentObject(biometricAuth)
 
-                // Lock screen overlay - shown when biometric auth is needed
-                if showLockScreen && !isUITesting {
-                    LockScreenView(biometricAuth: biometricAuth)
-                        .environmentObject(authManager)
-                        .transition(.opacity)
-                }
-
-                // Loading screen overlay - stays visible during initial load
-                if isLoading && !isUITesting {
-                    LoadingView()
-                        .opacity(loadingOpacity)
-                        .transition(.opacity.combined(with: .scale(scale: 1.02)))
+                // Loading screen overlay - stays visible during initial load and handles biometric auth
+                if (isLoading || showLockScreen) && !isUITesting {
+                    LoadingView(
+                        biometricAuth: biometricAuth,
+                        onUnlockTapped: {
+                            biometricAuth.authenticate()
+                        },
+                        onLogoutTapped: {
+                            Task {
+                                do {
+                                    try await authManager.signOut()
+                                    showLockScreen = false
+                                    isLoading = false
+                                } catch {
+                                    AppLogger.error("Error signing out: \(error.localizedDescription)")
+                                }
+                            }
+                        }
+                    )
+                    .environmentObject(authManager)
+                    .opacity(loadingOpacity)
+                    .transition(.opacity.combined(with: .scale(scale: 1.02)))
                 }
             }
             .task {
@@ -141,9 +194,16 @@ struct HoidmaApp: App {
                 if newValue {
                     AppLogger.debug("Biometric unlocked - dismissing screens and refreshing prices")
                     selectedTab = 1
-                    showLockScreen = false
-                    if isLoading {
-                        dismissLoadingWithFade()
+
+                    // Dismiss with fade animation
+                    if isLoading || showLockScreen {
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            loadingOpacity = 0.0
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            isLoading = false
+                            showLockScreen = false
+                        }
                     }
 
                     // Refresh stock prices after unlocking
@@ -185,13 +245,11 @@ struct HoidmaApp: App {
             return
         }
 
-        // Biometric enabled - trigger authentication
+        // Biometric enabled - keep loading screen visible
+        // LoadingView will automatically trigger Face ID and show Unlock/Log out buttons
         if !biometricAuth.isUnlocked {
-            AppLogger.debug("Triggering biometric authentication")
-            // Dismiss loading and show lock screen with email fallback option
-            dismissLoadingWithFade()
-            showLockScreen = true
-            // LockScreenView will handle the biometric auth and email fallback
+            AppLogger.debug("Keeping loading screen - biometric auth will trigger automatically")
+            // Loading screen stays visible and handles biometric auth
         } else {
             // Already unlocked
             selectedTab = 1
@@ -209,12 +267,14 @@ struct HoidmaApp: App {
             if authManager.isAuthenticated && biometricAuth.biometricAuthEnabled {
                 biometricAuth.lock()
                 showLockScreen = true  // Show lock screen when returning
+                loadingOpacity = 1.0   // Reset opacity for lock screen
                 AppLogger.debug("App locked - went to background")
             }
         case .active:
             // When becoming active, check if we need to re-authenticate
             if authManager.isAuthenticated && biometricAuth.biometricAuthEnabled && !biometricAuth.isUnlocked {
                 showLockScreen = true
+                loadingOpacity = 1.0  // Reset opacity for lock screen
                 AppLogger.debug("App active - showing lock screen for re-authentication")
             }
 
