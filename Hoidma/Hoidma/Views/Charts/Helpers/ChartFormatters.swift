@@ -93,30 +93,33 @@ enum ChartFormatters {
         }
     }
 
-    /// Format intraday time label for chart axis
+    /// Intraday time label parts for chart axis
     /// - Parameter date: The date to format
-    /// - Returns: Formatted string ("Open", "Close", or time in local timezone)
-    static func formatIntradayTime(_ date: Date) -> String {
+    /// - Returns: Tuple of (label, time) where label is "Open"/"Close"/nil and time is local timezone
+    static func intradayTimeParts(_ date: Date) -> (label: String?, time: String) {
         // Get EST components to check for market open/close
         let calendar = ChartTimezoneHelper.estCalendar
         let estComponents = calendar.dateComponents([.hour, .minute], from: date)
         let estHour = estComponents.hour ?? 0
         let estMinute = estComponents.minute ?? 0
 
+        // Format time in device's local timezone
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "h:mma"
+        let localTime = formatter.string(from: date).lowercased()
+
         // Check if this is market open (9:30 AM EST)
         if estHour == 9 && estMinute == 30 {
-            return "Open"
+            return ("Open", localTime)
         }
 
         // Check if this is market close (4:00 PM EST)
         if estHour == 16 && estMinute == 0 {
-            return "Close"
+            return ("Close", localTime)
         }
 
-        // For middle time, show local time
-        let formatter = DateFormatter()
-        formatter.timeZone = TimeZone.current  // Use device's local timezone
-        formatter.dateFormat = "h:mm a"
-        return formatter.string(from: date)
+        // For middle time, no label
+        return (nil, localTime)
     }
 }

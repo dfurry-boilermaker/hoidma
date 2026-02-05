@@ -54,7 +54,7 @@ struct ChartsView: View {
                             onChange: { chartViewModel.onPeriodChange() }
                         )
                         .padding(.horizontal, 20)
-                        .padding(.top, 8)
+                        .padding(.top, 2)
 
                         // Portfolio/Stock Selector (fixed, not scrollable)
                         UnifiedStockSelector(
@@ -280,21 +280,31 @@ struct UnifiedChart: View {
                     }
                 }
                 .chartYScale(domain: getYAxisDomain())
+                .chartXScale(domain: chartViewModel.selectedPeriod == .oneDay
+                    ? getIntradayAxisValues().first!.addingTimeInterval(-20 * 60)...getIntradayAxisValues().last!.addingTimeInterval(75 * 60)
+                    : chartData.first!.date...chartData.last!.date.addingTimeInterval(210 * 24 * 60 * 60))
                 .chartXAxis {
                     if chartViewModel.selectedPeriod == .oneDay {
-                        // Custom 1D axis - let chart auto-scale but use custom labels
-                        AxisMarks(preset: .aligned, values: .automatic(desiredCount: 3)) { value in
+                        // Custom 1D axis with 3 fixed labels: Open, Middle, Close
+                        AxisMarks(preset: .extended, values: getIntradayAxisValues()) { value in
                             if let date = value.as(Date.self) {
+                                let parts = ChartFormatters.intradayTimeParts(date)
                                 AxisValueLabel {
-                                    Text(formatIntradayTime(date))
-                                        .font(.system(size: 9))
+                                    VStack(spacing: 1) {
+                                        Text(parts.time)
+                                            .font(.system(size: 8))
+                                        if let label = parts.label {
+                                            Text(label)
+                                                .font(.system(size: 8, weight: .medium))
+                                        }
+                                    }
                                 }
                             }
                         }
                     } else {
-                        // Standard axis for other periods
+                        // Standard axis for ALL period - show month + year
                         AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-                            AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                            AxisValueLabel(format: .dateTime.year())
                                 .font(.system(size: 10))
                         }
                     }
@@ -344,9 +354,6 @@ struct UnifiedChart: View {
         ChartAxisHelpers.getIntradayAxisValues()
     }
 
-    private func formatIntradayTime(_ date: Date) -> String {
-        ChartFormatters.formatIntradayTime(date)
-    }
 }
 
 // MARK: - Time Period Selector
@@ -364,12 +371,12 @@ struct TimePeriodSelector: View {
                         onChange()
                     }
                 } label: {
-                    Image(period == .oneDay ? "daily" : "alltime")
+                    Image(period == .oneDay ? "daily" : "5year")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(height: 10)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .frame(height: period == .oneDay ? 11 : 10)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, period == .oneDay ? 3.5 : 4)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(selectedPeriod == period ?
@@ -642,29 +649,26 @@ struct UnifiedStockSelector: View {
                         impact.impactOccurred()
                         onSelect(nil)
                     }) {
-                        VStack(alignment: .center, spacing: 3) {
-                            Text("Portfolio")
-                                .font(.system(size: 13, weight: selectedTicker == nil ? .bold : .medium))
-                                .multilineTextAlignment(.center)
-
-                            // Empty spacer to match stock button height
-                            Text(" ")
-                                .font(.system(size: 9, weight: .semibold))
-                                .opacity(0)
-                        }
-                        .frame(minWidth: 70, alignment: .center)
+                        Text("Portfolio")
+                            .font(.system(size: 13, weight: selectedTicker == nil ? .bold : .medium))
+                            .frame(minWidth: 70, minHeight: 30, alignment: .center)
                         .foregroundColor(selectedTicker == nil ? .white : .primary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                         .background(
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(selectedTicker == nil ?
-                                      AnyShapeStyle(LinearGradient(
-                                          colors: [Color.blue, Color.blue.opacity(0.8)],
-                                          startPoint: .topLeading,
-                                          endPoint: .bottomTrailing
-                                      )) :
-                                      AnyShapeStyle(Color.gray.opacity(0.15)))
+                            Group {
+                                if selectedTicker == nil {
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .fill(LinearGradient(
+                                            colors: [Color.blue, Color.blue.opacity(0.8)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ))
+                                } else {
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .stroke(Color.gray.opacity(0.4), lineWidth: 1)
+                                }
+                            }
                         )
                         .shadow(color: selectedTicker == nil ? Color.blue.opacity(0.3) : .clear,
                                 radius: 3, x: 0, y: 1)
@@ -786,14 +790,19 @@ struct StockChipButton: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(isSelected ?
-                          AnyShapeStyle(LinearGradient(
-                              colors: [changeColor, changeColor.opacity(0.8)],
-                              startPoint: .topLeading,
-                              endPoint: .bottomTrailing
-                          )) :
-                          AnyShapeStyle(Color.gray.opacity(0.15)))
+                Group {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(LinearGradient(
+                                colors: [changeColor, changeColor.opacity(0.8)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                    } else {
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(Color.gray.opacity(0.4), lineWidth: 1)
+                    }
+                }
             )
             .shadow(color: isSelected ? changeColor.opacity(0.3) : .clear,
                     radius: 3, x: 0, y: 1)

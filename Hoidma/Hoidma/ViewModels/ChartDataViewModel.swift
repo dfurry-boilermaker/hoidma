@@ -46,18 +46,18 @@ enum ChartTimePeriod: String, CaseIterable, Identifiable {
 
         switch self {
         case .oneDay:
-            // For 1D chart: 8:00 AM EST (pre-market start)
+            // For 1D chart: 9:30 AM EST (market open, no pre-market)
             let calendar = ChartTimezoneHelper.estCalendar
             let todayEST = ChartTimezoneHelper.todayInEST()
-            var eightAM = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: todayEST)!
+            var marketOpen = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: todayEST)!
 
-            // If 8 AM EST today is in the future, use yesterday's 8 AM EST
-            if ChartTimezoneHelper.isInFuture(eightAM) {
+            // If 9:30 AM EST today is in the future, use yesterday's 9:30 AM EST
+            if ChartTimezoneHelper.isInFuture(marketOpen) {
                 let yesterday = calendar.date(byAdding: .day, value: -1, to: todayEST)!
-                eightAM = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: yesterday)!
+                marketOpen = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: yesterday)!
             }
 
-            return eightAM
+            return marketOpen
         case .all:
             // 5 years ago from now (timezone-agnostic)
             let calendar = Calendar.current
@@ -71,13 +71,20 @@ enum ChartTimePeriod: String, CaseIterable, Identifiable {
 
         switch self {
         case .oneDay:
-            // For 1D chart: current time or 8 PM EST, whichever is earlier
+            // For 1D chart: current time or 4:00 PM EST (market close), whichever is earlier
             let calendar = ChartTimezoneHelper.estCalendar
-            let todayEST = ChartTimezoneHelper.todayInEST()
-            let eightPM = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: todayEST)!
+            var tradingDay = ChartTimezoneHelper.todayInEST()
 
-            // Use current time or 8 PM EST, whichever is earlier
-            return min(now, eightPM)
+            // If market hasn't opened yet today, use yesterday's close
+            let marketOpen = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: tradingDay)!
+            if ChartTimezoneHelper.isInFuture(marketOpen) {
+                tradingDay = calendar.date(byAdding: .day, value: -1, to: tradingDay)!
+            }
+
+            let marketClose = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: tradingDay)!
+
+            // Use current time or 4:00 PM EST, whichever is earlier
+            return min(now, marketClose)
         case .all:
             return now
         }

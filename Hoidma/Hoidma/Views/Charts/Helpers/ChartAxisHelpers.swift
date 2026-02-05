@@ -54,26 +54,33 @@ enum ChartAxisHelpers {
     // MARK: - X-Axis Values
 
     /// Get intraday axis values (market open, middle, close)
+    /// Uses the same trading day as ChartTimePeriod.startDate
     /// - Returns: Array of Date values for intraday chart axis
     static func getIntradayAxisValues() -> [Date] {
         var values: [Date] = []
 
         // Use timezone helper to ensure consistent EST handling
         let calendar = ChartTimezoneHelper.estCalendar
-        let todayEST = ChartTimezoneHelper.todayInEST()
+        var tradingDay = ChartTimezoneHelper.todayInEST()
+
+        // Match ChartTimePeriod.oneDay logic: if market open is in the future, use yesterday
+        if let marketOpen = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: tradingDay),
+           ChartTimezoneHelper.isInFuture(marketOpen) {
+            tradingDay = calendar.date(byAdding: .day, value: -1, to: tradingDay)!
+        }
 
         // Market open: 9:30 AM EST
-        if let marketOpen = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: todayEST) {
+        if let marketOpen = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: tradingDay) {
             values.append(marketOpen)
         }
 
         // Market middle: 12:45 PM EST (middle of 9:30am - 4:00pm)
-        if let marketMiddle = calendar.date(bySettingHour: 12, minute: 45, second: 0, of: todayEST) {
+        if let marketMiddle = calendar.date(bySettingHour: 12, minute: 45, second: 0, of: tradingDay) {
             values.append(marketMiddle)
         }
 
         // Market close: 4:00 PM EST
-        if let marketClose = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: todayEST) {
+        if let marketClose = calendar.date(bySettingHour: 16, minute: 0, second: 0, of: tradingDay) {
             values.append(marketClose)
         }
 
