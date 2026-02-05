@@ -26,69 +26,99 @@ actor HistoricalPriceCache {
     ///   - ticker: Stock symbol
     ///   - from: Start date
     ///   - to: End date
+    ///   - useIntraday: If true, fetch 15-minute bars instead of daily bars
     /// - Returns: Dictionary mapping dates to closing prices
     func getPrices(
         for ticker: String,
         from: Date,
-        to: Date
+        to: Date,
+        useIntraday: Bool = false
     ) async -> [Date: Double] {
         let cacheKey = ticker.uppercased()
-        let requestedFrom = Calendar.current.startOfDay(for: from)
-        let requestedTo = Calendar.current.startOfDay(for: to)
 
-        // Check if we have valid cached data covering the requested range
-        if let lastFetch = lastFetchDate[cacheKey],
-           Date().timeIntervalSince(lastFetch) < cacheDuration,
-           let range = cachedDateRange[cacheKey],
-           range.from <= requestedFrom && range.to >= requestedTo,
-           let cached = priceCache[cacheKey] {
-            AppLogger.debug("Cache hit for \(ticker)")
-            return filterPrices(cached, from: requestedFrom, to: requestedTo)
+        // For intraday, don't normalize to start of day - use actual timestamps
+        let requestedFrom = useIntraday ? from : Calendar.current.startOfDay(for: from)
+        let requestedTo = useIntraday ? to : Calendar.current.startOfDay(for: to)
+
+        // Skip cache for intraday data since it changes frequently
+        if !useIntraday {
+            // Check if we have valid cached data covering the requested range
+            if let lastFetch = lastFetchDate[cacheKey],
+               Date().timeIntervalSince(lastFetch) < cacheDuration,
+               let range = cachedDateRange[cacheKey],
+               range.from <= requestedFrom && range.to >= requestedTo,
+               let cached = priceCache[cacheKey] {
+                AppLogger.debug("Cache hit for \(ticker)")
+                return filterPrices(cached, from: requestedFrom, to: requestedTo)
+            }
         }
 
         // Need to fetch from API
-        AppLogger.debug("Cache miss for \(ticker), fetching from Polygon")
+        AppLogger.debug("Cache miss for \(ticker), fetching from Polygon (\(useIntraday ? "15min" : "daily"))")
 
         do {
-            let bars = try await PolygonService.shared.fetchDailyBars(
-                ticker: ticker,
-                from: from,
-                to: to
-            )
+            let bars: [PolygonService.AggregateBar]
+
+            if useIntraday {
+                // Fetch 15-minute intraday bars
+                bars = try await PolygonService.shared.fetchIntradayBars(
+                    ticker: ticker,
+                    from: from,
+                    to: to
+                )
+            } else {
+                // Fetch daily bars
+                bars = try await PolygonService.shared.fetchDailyBars(
+                    ticker: ticker,
+                    from: from,
+                    to: to
+                )
+            }
 
             // Convert to [Date: Double] using close prices
             var prices: [Date: Double] = [:]
             for bar in bars {
-                prices[bar.dayStart] = bar.c
+                // For intraday, use exact timestamp; for daily, use day start
+                let key = useIntraday ? bar.date : bar.dayStart
+                prices[key] = bar.c
             }
 
-            // Merge with existing cache (if any) to preserve older data
-            if var existing = priceCache[cacheKey] {
-                existing.merge(prices) { _, new in new }
-                priceCache[cacheKey] = existing
+            // Only cache daily data, not intraday
+            if !useIntraday {
+                // Merge with existing cache (if any) to preserve older data
+                if var existing = priceCache[cacheKey] {
+                    existing.merge(prices) { _, new in new }
+                    priceCache[cacheKey] = existing
+                } else {
+                    priceCache[cacheKey] = prices
+                }
+
+                // Update metadata
+                lastFetchDate[cacheKey] = Date()
+
+                // Update cached date range
+                if let existingRange = cachedDateRange[cacheKey] {
+                    cachedDateRange[cacheKey] = (
+                        from: min(existingRange.from, requestedFrom),
+                        to: max(existingRange.to, requestedTo)
+                    )
+                } else {
+                    cachedDateRange[cacheKey] = (from: requestedFrom, to: requestedTo)
+                }
+
+                return filterPrices(priceCache[cacheKey] ?? [:], from: requestedFrom, to: requestedTo)
             } else {
-                priceCache[cacheKey] = prices
+                // Return intraday data directly without caching
+                return prices
             }
-
-            // Update metadata
-            lastFetchDate[cacheKey] = Date()
-
-            // Update cached date range
-            if let existingRange = cachedDateRange[cacheKey] {
-                cachedDateRange[cacheKey] = (
-                    from: min(existingRange.from, requestedFrom),
-                    to: max(existingRange.to, requestedTo)
-                )
-            } else {
-                cachedDateRange[cacheKey] = (from: requestedFrom, to: requestedTo)
-            }
-
-            return filterPrices(priceCache[cacheKey] ?? [:], from: requestedFrom, to: requestedTo)
 
         } catch {
             AppLogger.error("Failed to fetch prices for \(ticker): \(error.localizedDescription)")
-            // Return whatever we have cached, even if stale
-            return filterPrices(priceCache[cacheKey] ?? [:], from: requestedFrom, to: requestedTo)
+            // Return whatever we have cached, even if stale (only for daily data)
+            if !useIntraday {
+                return filterPrices(priceCache[cacheKey] ?? [:], from: requestedFrom, to: requestedTo)
+            }
+            return [:]
         }
     }
 
@@ -97,11 +127,13 @@ actor HistoricalPriceCache {
     ///   - holdings: Dictionary of ticker -> shares held
     ///   - from: Start date
     ///   - to: End date
+    ///   - useIntraday: If true, fetch 15-minute bars for 1D charts
     /// - Returns: Array of (date, totalValue) tuples sorted by date
     func getPortfolioHistory(
         holdings: [String: Double],
         from: Date,
-        to: Date
+        to: Date,
+        useIntraday: Bool = false
     ) async -> [(date: Date, value: Double)] {
         guard !holdings.isEmpty else { return [] }
 
@@ -111,7 +143,7 @@ actor HistoricalPriceCache {
         await withTaskGroup(of: (String, [Date: Double]).self) { group in
             for ticker in holdings.keys {
                 group.addTask {
-                    let prices = await self.getPrices(for: ticker, from: from, to: to)
+                    let prices = await self.getPrices(for: ticker, from: from, to: to, useIntraday: useIntraday)
                     return (ticker, prices)
                 }
             }

@@ -78,6 +78,105 @@ actor PolygonService {
 
     // MARK: - Historical Data
 
+    /// Fetch historical intraday bars for a ticker (15-minute intervals)
+    /// - Parameters:
+    ///   - ticker: Stock symbol (e.g., "AAPL")
+    ///   - from: Start date/time
+    ///   - to: End date/time
+    /// - Returns: Array of 15-minute price bars sorted by date ascending
+    func fetchIntradayBars(
+        ticker: String,
+        from: Date,
+        to: Date
+    ) async throws -> [AggregateBar] {
+        // Check if API is configured
+        guard APIConfig.isPolygonConfigured else {
+            AppLogger.warning("Polygon API key not configured")
+            throw PolygonError.notConfigured
+        }
+
+        // Check rate limit
+        let config = APIRateLimiter.EndpointConfig.polygon
+        guard await rateLimiter.canMakeRequest(endpoint: "polygon", config: config) else {
+            let waitTime = await rateLimiter.timeUntilNextRequest(endpoint: "polygon", config: config)
+            AppLogger.warning("Polygon rate limited, wait \(Int(waitTime))s")
+            throw PolygonError.rateLimited
+        }
+
+        // Record the request
+        await rateLimiter.recordRequest(endpoint: "polygon")
+
+        // Format dates for intraday (need milliseconds timestamp)
+        let fromMs = Int64(from.timeIntervalSince1970 * 1000)
+        let toMs = Int64(to.timeIntervalSince1970 * 1000)
+
+        // Build URL for 15-minute bars
+        let path = "/v2/aggs/ticker/\(ticker.uppercased())/range/15/minute/\(fromMs)/\(toMs)"
+        guard var components = URLComponents(string: "\(baseURL)\(path)") else {
+            throw APIError.invalidURL
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "adjusted", value: "true"),
+            URLQueryItem(name: "sort", value: "asc"),
+            URLQueryItem(name: "limit", value: "5000"),
+            URLQueryItem(name: "apiKey", value: apiKey)
+        ]
+
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+
+        AppLogger.debug("Fetching Polygon 15min data for \(ticker)")
+
+        // Make request
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15.0
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PolygonError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            let decoder = JSONDecoder()
+            let decoded = try decoder.decode(AggregatesResponse.self, from: data)
+
+            guard let results = decoded.results, !results.isEmpty else {
+                AppLogger.debug("No Polygon intraday data for \(ticker)")
+                throw PolygonError.noData
+            }
+
+            AppLogger.debug("Fetched \(results.count) 15min bars for \(ticker)")
+            return results
+
+        case 429:
+            AppLogger.warning("Polygon rate limit hit for \(ticker)")
+            throw PolygonError.rateLimited
+
+        case 401, 403:
+            AppLogger.error("Polygon auth error: \(httpResponse.statusCode)")
+            throw APIError.unauthorized
+
+        case 404:
+            AppLogger.debug("Ticker not found: \(ticker)")
+            throw PolygonError.noData
+
+        case 400:
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            AppLogger.error("Polygon HTTP 400 for \(ticker): \(errorMessage)")
+            AppLogger.error("Request URL: \(url.absoluteString)")
+            throw PolygonError.apiError("HTTP 400: Bad request")
+
+        default:
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            AppLogger.error("Polygon error \(httpResponse.statusCode): \(errorMessage)")
+            throw PolygonError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+    }
+
     /// Fetch historical daily bars for a ticker
     /// - Parameters:
     ///   - ticker: Stock symbol (e.g., "AAPL")
@@ -106,9 +205,10 @@ actor PolygonService {
         // Record the request
         await rateLimiter.recordRequest(endpoint: "polygon")
 
-        // Format dates
+        // Format dates (use UTC to avoid timezone issues)
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(secondsFromGMT: 0) // UTC
         let fromStr = dateFormatter.string(from: from)
         let toStr = dateFormatter.string(from: to)
 
@@ -165,6 +265,12 @@ actor PolygonService {
         case 404:
             AppLogger.debug("Ticker not found: \(ticker)")
             throw PolygonError.noData
+
+        case 400:
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            AppLogger.error("Polygon HTTP 400 for \(ticker): \(errorMessage)")
+            AppLogger.error("Request URL: \(url.absoluteString)")
+            throw PolygonError.apiError("HTTP 400: Bad request")
 
         default:
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"

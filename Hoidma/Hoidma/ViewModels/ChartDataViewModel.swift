@@ -1,47 +1,92 @@
 import Foundation
 import Combine
 
+// MARK: - Timezone Helpers
+
+/// Helper functions to ensure consistent timezone handling across all chart operations
+/// CRITICAL: All market-related times must use EST (America/New_York) timezone
+enum ChartTimezoneHelper {
+    /// EST timezone used for all market operations
+    static let marketTimezone = TimeZone(identifier: "America/New_York")!
+
+    /// Get a calendar configured for EST timezone
+    static var estCalendar: Calendar {
+        var calendar = Calendar.current
+        calendar.timeZone = marketTimezone
+        return calendar
+    }
+
+    /// Get "today" in EST timezone (start of day)
+    /// - Parameter date: The date to convert (usually Date())
+    /// - Returns: Start of day in EST timezone
+    static func todayInEST(from date: Date = Date()) -> Date {
+        let calendar = estCalendar
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return calendar.date(from: components)!
+    }
+
+    /// Check if a date is in the future relative to now
+    static func isInFuture(_ date: Date) -> Bool {
+        return date > Date()
+    }
+}
+
+// MARK: - Chart Time Periods
+
 /// Time periods for chart display
 enum ChartTimePeriod: String, CaseIterable, Identifiable {
-    case oneWeek = "1W"
-    case oneMonth = "1M"
-    case threeMonths = "3M"
-    case sixMonths = "6M"
-    case oneYear = "1Y"
+    case oneDay = "1D"
     case all = "ALL"
 
     var id: String { rawValue }
 
     /// Calculate the start date for this time period
     var startDate: Date {
-        let calendar = Calendar.current
         let now = Date()
 
         switch self {
-        case .oneWeek:
-            return calendar.date(byAdding: .day, value: -7, to: now) ?? now
-        case .oneMonth:
-            return calendar.date(byAdding: .month, value: -1, to: now) ?? now
-        case .threeMonths:
-            return calendar.date(byAdding: .month, value: -3, to: now) ?? now
-        case .sixMonths:
-            return calendar.date(byAdding: .month, value: -6, to: now) ?? now
-        case .oneYear:
-            return calendar.date(byAdding: .year, value: -1, to: now) ?? now
+        case .oneDay:
+            // For 1D chart: 8:00 AM EST (pre-market start)
+            let calendar = ChartTimezoneHelper.estCalendar
+            let todayEST = ChartTimezoneHelper.todayInEST()
+            var eightAM = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: todayEST)!
+
+            // If 8 AM EST today is in the future, use yesterday's 8 AM EST
+            if ChartTimezoneHelper.isInFuture(eightAM) {
+                let yesterday = calendar.date(byAdding: .day, value: -1, to: todayEST)!
+                eightAM = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: yesterday)!
+            }
+
+            return eightAM
         case .all:
-            // 5 years max for free tier, adjust based on your Polygon plan
+            // 5 years ago from now (timezone-agnostic)
+            let calendar = Calendar.current
             return calendar.date(byAdding: .year, value: -5, to: now) ?? now
+        }
+    }
+
+    /// Calculate the end date for this time period
+    var endDate: Date {
+        let now = Date()
+
+        switch self {
+        case .oneDay:
+            // For 1D chart: current time or 8 PM EST, whichever is earlier
+            let calendar = ChartTimezoneHelper.estCalendar
+            let todayEST = ChartTimezoneHelper.todayInEST()
+            let eightPM = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: todayEST)!
+
+            // Use current time or 8 PM EST, whichever is earlier
+            return min(now, eightPM)
+        case .all:
+            return now
         }
     }
 
     /// Display name for the period
     var displayName: String {
         switch self {
-        case .oneWeek: return "1 Week"
-        case .oneMonth: return "1 Month"
-        case .threeMonths: return "3 Months"
-        case .sixMonths: return "6 Months"
-        case .oneYear: return "1 Year"
+        case .oneDay: return "1 Day"
         case .all: return "All Time"
         }
     }
@@ -66,7 +111,7 @@ class ChartDataViewModel: ObservableObject {
     @Published var costBasisHistory: [ChartDataPoint] = []
 
     /// Currently selected time period
-    @Published var selectedPeriod: ChartTimePeriod = .threeMonths
+    @Published var selectedPeriod: ChartTimePeriod = .oneDay
 
     /// Loading state
     @Published var isLoading: Bool = false
@@ -89,6 +134,7 @@ class ChartDataViewModel: ObservableObject {
     // MARK: - Private Properties
 
     private weak var stockViewModel: StockViewModel?
+    private var refreshTimer: Timer?
 
     // MARK: - Initialization
 
@@ -102,6 +148,9 @@ class ChartDataViewModel: ObservableObject {
     /// Load portfolio value history for the selected time period
     func loadPortfolioHistory() async {
         guard let viewModel = stockViewModel else { return }
+
+        // Prevent concurrent fetches
+        guard !isLoading else { return }
 
         isLoading = true
         errorMessage = nil
@@ -132,10 +181,13 @@ class ChartDataViewModel: ObservableObject {
         }
 
         // Fetch portfolio history from cache/API
+        // Use 15-minute intraday data for 1D period
+        let useIntraday = (selectedPeriod == .oneDay)
         let history = await HistoricalPriceCache.shared.getPortfolioHistory(
             holdings: holdings,
             from: selectedPeriod.startDate,
-            to: Date()
+            to: selectedPeriod.endDate,
+            useIntraday: useIntraday
         )
 
         // Convert to ChartDataPoint array
@@ -159,11 +211,17 @@ class ChartDataViewModel: ObservableObject {
 
     /// Reload data when period changes
     func onPeriodChange() {
+        // Stop existing auto-refresh
+        stopAutoRefresh()
+
         Task {
             await loadPortfolioHistory()
             if let ticker = selectedTicker {
                 await loadTickerHistory(ticker: ticker)
             }
+
+            // Restart auto-refresh if appropriate
+            startAutoRefresh()
         }
     }
 
@@ -176,13 +234,19 @@ class ChartDataViewModel: ObservableObject {
             return
         }
 
+        // Prevent concurrent fetches
+        guard !isLoading else { return }
+
         selectedTicker = ticker
         isLoading = true
 
+        // Use 15-minute intraday data for 1D period
+        let useIntraday = (selectedPeriod == .oneDay)
         let prices = await HistoricalPriceCache.shared.getPrices(
             for: ticker,
             from: selectedPeriod.startDate,
-            to: Date()
+            to: selectedPeriod.endDate,
+            useIntraday: useIntraday
         )
 
         // Convert to sorted ChartDataPoint array
@@ -276,5 +340,62 @@ class ChartDataViewModel: ObservableObject {
     /// Whether portfolio is up or down for the period
     var isPositivePeriod: Bool {
         periodReturn.value >= 0
+    }
+
+    // MARK: - Auto-Refresh
+
+    /// Start auto-refresh for 1D charts during market hours
+    func startAutoRefresh() {
+        // Only auto-refresh for 1D period during market hours
+        guard selectedPeriod == .oneDay else { return }
+        guard isMarketHours() else { return }
+
+        // Refresh every 2 minutes
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                await self.loadPortfolioHistory()
+                if let ticker = self.selectedTicker {
+                    await self.loadTickerHistory(ticker: ticker)
+                }
+            }
+        }
+    }
+
+    /// Stop auto-refresh timer
+    func stopAutoRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    /// Check if currently in market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
+    private func isMarketHours() -> Bool {
+        let now = Date()
+        let calendar = ChartTimezoneHelper.estCalendar
+
+        let hour = calendar.component(.hour, from: now)
+        let minute = calendar.component(.minute, from: now)
+        let weekday = calendar.component(.weekday, from: now)
+
+        // Monday-Friday (2-6), 9:30 AM - 4:00 PM EST
+        guard weekday >= 2 && weekday <= 6 else { return false }
+        if hour < 9 || hour > 16 { return false }
+        if hour == 9 && minute < 30 { return false }
+        if hour == 16 && minute > 0 { return false }
+
+        return true
+    }
+
+    /// Refresh chart data (for pull-to-refresh)
+    func refreshChartData() async {
+        await loadPortfolioHistory()
+        if let ticker = selectedTicker {
+            await loadTickerHistory(ticker: ticker)
+        }
+    }
+
+    deinit {
+        // Invalidate timer synchronously in deinit
+        refreshTimer?.invalidate()
     }
 }
